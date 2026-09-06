@@ -195,6 +195,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
+        config_entry=entry,
         name=f"{entry.title} pfSense state",
         update_method=async_update_data,
         update_interval=timedelta(seconds=scan_interval),
@@ -233,6 +234,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         device_tracker_coordinator = DataUpdateCoordinator(
             hass,
             _LOGGER,
+            config_entry=entry,
             name=f"{entry.title} pfSense device tracker state",
             update_method=async_update_device_tracker_data,
             update_interval=timedelta(seconds=device_tracker_scan_interval),

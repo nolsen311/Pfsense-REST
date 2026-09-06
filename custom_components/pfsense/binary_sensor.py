@@ -39,7 +39,7 @@ async def async_setup_entry(
                     name="CARP Status",
                     icon="mdi:gauge",
                 ),
-                False,
+                True,
             )
         ]
 
