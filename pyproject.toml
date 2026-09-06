@@ -141,21 +141,6 @@ ignore = [
   # Disabled to implement in follow up PRs after ruff 0.16 bump
   "ISC004",
   "LOG004",
-
-  # ---------------------------------------------------------------------------
-  # Project-specific: rules from the Home Assistant selection that this fork
-  # does not satisfy yet. Kept as a checklist to clear incrementally rather
-  # than in one sweep; new code is still linted against everything above.
-  # ---------------------------------------------------------------------------
-  "D100",    # undocumented public module
-  "D101",    # undocumented public class
-  "D102",    # undocumented public method
-  "D103",    # undocumented public function
-  "D105",    # undocumented magic method
-  "D106",    # undocumented public nested class
-  "D107",    # undocumented __init__
-  "D205",    # blank line after docstring summary
-  "D415",    # docstring first line punctuation
 ]
 
 [tool.ruff.lint.flake8-pytest-style]

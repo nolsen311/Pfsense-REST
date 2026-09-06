@@ -37,6 +37,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def lookup_mac(mac_vendor_lookup: AsyncMacLookup, mac: str) -> str:
+    """Return the OUI vendor string for a MAC address."""
     mac = mac_vendor_lookup.sanitise(mac)
     if isinstance(mac, str):
         mac = mac.encode("utf8")
@@ -184,6 +185,7 @@ class PfSenseScannerEntity(PfSenseEntity, ScannerEntity):
 
     @property
     def available(self) -> bool:
+        """Return whether the entity is available."""
         state = self.coordinator.data
         arp_table = dict_get(state, "arp_table")
         if arp_table is None:

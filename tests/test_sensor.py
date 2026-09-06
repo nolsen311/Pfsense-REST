@@ -1,3 +1,5 @@
+"""Tests for the pfSense sensors."""
+
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
@@ -10,6 +12,7 @@ from homeassistant.components.sensor import SensorEntityDescription
 
 @pytest.fixture
 def mock_coordinator():
+    """Test helper."""
     coord = MagicMock()
     coord.data = {
         "telemetry": {
@@ -32,6 +35,7 @@ def mock_coordinator():
     return_value="pfSense",
 )
 def test_openvpn_sensor(mock_name, mock_uid, mock_coordinator):
+    """Test openvpn sensor."""
     config_entry = MockConfigEntry(domain=DOMAIN)
     desc = SensorEntityDescription(
         key="telemetry.openvpn.servers.1.status", name="VPN Status"

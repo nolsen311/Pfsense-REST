@@ -157,6 +157,8 @@ async def async_setup_entry(
 
 
 class PfSenseSwitch(PfSenseEntity, SwitchEntity):
+    """Base class for pfSense switches."""
+
     def __init__(
         self,
         config_entry,
@@ -174,10 +176,12 @@ class PfSenseSwitch(PfSenseEntity, SwitchEntity):
 
     @property
     def is_on(self):
+        """Return true if the entity is on."""
         return False
 
     @property
     def extra_state_attributes(self):
+        """Return the entity's extra state attributes."""
         return None
 
     async def _maybe_kill_rule_states(self, rule):
@@ -195,6 +199,8 @@ class PfSenseSwitch(PfSenseEntity, SwitchEntity):
 
 
 class PfSenseFilterSwitch(PfSenseSwitch):
+    """Switch that enables or disables a firewall rule."""
+
     def _pfsense_get_tracker(self):
         return self.entity_description.key.split(".")[1]
 
@@ -208,6 +214,7 @@ class PfSenseFilterSwitch(PfSenseSwitch):
 
     @property
     def available(self) -> bool:
+        """Return whether the entity is available."""
         rule = self._pfsense_get_rule()
         if rule is None:
             return False
@@ -216,6 +223,7 @@ class PfSenseFilterSwitch(PfSenseSwitch):
 
     @property
     def is_on(self):
+        """Return true if the entity is on."""
         rule = self._pfsense_get_rule()
         if rule is None:
             return STATE_UNKNOWN
@@ -245,6 +253,8 @@ class PfSenseFilterSwitch(PfSenseSwitch):
 
 
 class PfSenseNatSwitch(PfSenseSwitch):
+    """Switch that enables or disables a NAT rule."""
+
     def _pfsense_get_rule_type(self):
         return self.entity_description.key.split(".")[0]
 
@@ -267,6 +277,7 @@ class PfSenseNatSwitch(PfSenseSwitch):
 
     @property
     def available(self) -> bool:
+        """Return whether the entity is available."""
         rule = self._pfsense_get_rule()
         if rule is None:
             return False
@@ -275,6 +286,7 @@ class PfSenseNatSwitch(PfSenseSwitch):
 
     @property
     def is_on(self):
+        """Return true if the entity is on."""
         rule = self._pfsense_get_rule()
         if rule is None:
             return STATE_UNKNOWN
@@ -316,6 +328,8 @@ class PfSenseNatSwitch(PfSenseSwitch):
 
 
 class PfSenseServiceSwitch(PfSenseSwitch):
+    """Switch that starts or stops a pfSense service."""
+
     def _pfsense_get_property_name(self):
         return self.entity_description.key.split(".")[2]
 
@@ -342,6 +356,7 @@ class PfSenseServiceSwitch(PfSenseSwitch):
 
     @property
     def available(self) -> bool:
+        """Return whether the entity is available."""
         service = self._pfsense_get_service()
         prop = self._pfsense_get_property_name()
         if service is None or prop not in service:
@@ -351,6 +366,7 @@ class PfSenseServiceSwitch(PfSenseSwitch):
 
     @property
     def is_on(self):
+        """Return true if the entity is on."""
         service = self._pfsense_get_service()
         prop = self._pfsense_get_property_name()
         try:

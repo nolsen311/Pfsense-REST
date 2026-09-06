@@ -1,3 +1,5 @@
+"""Home Assistant service registration for the pfSense integration."""
+
 import logging
 
 import voluptuous as vol
@@ -36,6 +38,8 @@ def async_get_entities(hass: HomeAssistant) -> dict[str, Entity]:
 
 
 class ServiceRegistrar:
+    """Registers the integration's Home Assistant services once."""
+
     def __init__(
         self,
         hass: HomeAssistant,
@@ -45,6 +49,7 @@ class ServiceRegistrar:
 
     @callback
     def async_register(self):
+        """Register the integration's services once."""
         if "loaded" in _data:
             return
 

@@ -295,6 +295,7 @@ async def async_setup_entry(  # noqa: C901 - flat per-telemetry-type entity buil
 
 
 def normalize_filesystem_device_name(device_name):
+    """Return a slug-safe token for a filesystem device or mountpoint."""
     return device_name.replace("/", "_slash_").strip("_")
 
 
@@ -321,8 +322,11 @@ class PfSenseSensor(PfSenseEntity, SensorEntity):
 
 
 class PfSenseStaticKeySensor(PfSenseSensor):
+    """Sensor backed by a fixed telemetry key from SENSOR_TYPES."""
+
     @property
     def available(self) -> bool:
+        """Return whether the entity is available."""
         value = self._get_pfsense_state_value(self.entity_description.key)
         if value is None:
             return False
@@ -332,6 +336,7 @@ class PfSenseStaticKeySensor(PfSenseSensor):
 
     @property
     def native_value(self):
+        """Return the entity's current value."""
         value = self._get_pfsense_state_value(self.entity_description.key)
         if value is None:
             return STATE_UNKNOWN
@@ -357,6 +362,8 @@ class PfSenseStaticKeySensor(PfSenseSensor):
 
 
 class PfSenseFilesystemSensor(PfSenseSensor):
+    """Sensor for a filesystem's used-space percentage."""
+
     def _pfsense_get_filesystem(self):
         state = self.coordinator.data
         found = None
@@ -369,6 +376,7 @@ class PfSenseFilesystemSensor(PfSenseSensor):
 
     @property
     def available(self) -> bool:
+        """Return whether the entity is available."""
         filesystem = self._pfsense_get_filesystem()
         if filesystem is None:
             return False
@@ -376,11 +384,13 @@ class PfSenseFilesystemSensor(PfSenseSensor):
 
     @property
     def native_value(self):
+        """Return the entity's current value."""
         filesystem = self._pfsense_get_filesystem()
         return filesystem["percent_used"]
 
     @property
     def extra_state_attributes(self):
+        """Return the entity's extra state attributes."""
         attributes = {}
         filesystem = self._pfsense_get_filesystem()
         for attr in ["device", "type", "total_size", "mountpoint"]:
@@ -389,6 +399,8 @@ class PfSenseFilesystemSensor(PfSenseSensor):
 
 
 class PfSenseInterfaceSensor(PfSenseSensor):
+    """Sensor for a network interface counter or status."""
+
     def _pfsense_get_interface_property_name(self):
         return self.entity_description.key.split(".")[3]
 
@@ -407,6 +419,7 @@ class PfSenseInterfaceSensor(PfSenseSensor):
 
     @property
     def available(self) -> bool:
+        """Return whether the entity is available."""
         interface = self._pfsense_get_interface()
         prop = self._pfsense_get_interface_property_name()
         if interface is None or prop not in interface:
@@ -415,6 +428,7 @@ class PfSenseInterfaceSensor(PfSenseSensor):
 
     @property
     def extra_state_attributes(self):
+        """Return the entity's extra state attributes."""
         attributes = {}
         interface = self._pfsense_get_interface()
         for attr in ["hwif", "enable", "if", "macaddr", "mtu", "media"]:
@@ -424,6 +438,7 @@ class PfSenseInterfaceSensor(PfSenseSensor):
 
     @property
     def icon(self):
+        """Return the entity icon."""
         prop = self._pfsense_get_interface_property_name()
         if prop == "status" and self.native_value != "up":
             return "mdi:close-network-outline"
@@ -431,6 +446,7 @@ class PfSenseInterfaceSensor(PfSenseSensor):
 
     @property
     def native_value(self):
+        """Return the entity's current value."""
         interface = self._pfsense_get_interface()
         prop = self._pfsense_get_interface_property_name()
         try:
@@ -440,6 +456,8 @@ class PfSenseInterfaceSensor(PfSenseSensor):
 
 
 class PfSenseCarpInterfaceSensor(PfSenseSensor):
+    """Sensor for a CARP virtual IP's status."""
+
     def _pfsense_get_interface_name(self):
         return self.entity_description.key.split(".")[2]
 
@@ -455,6 +473,7 @@ class PfSenseCarpInterfaceSensor(PfSenseSensor):
 
     @property
     def extra_state_attributes(self):
+        """Return the entity's extra state attributes."""
         attributes = {}
         interface = self._pfsense_get_interface()
         for attr in [
@@ -471,6 +490,7 @@ class PfSenseCarpInterfaceSensor(PfSenseSensor):
 
     @property
     def available(self) -> bool:
+        """Return whether the entity is available."""
         interface = self._pfsense_get_interface()
         if interface is None:
             return False
@@ -478,12 +498,14 @@ class PfSenseCarpInterfaceSensor(PfSenseSensor):
 
     @property
     def icon(self):
+        """Return the entity icon."""
         if self.native_value != "MASTER":
             return "mdi:close-network-outline"
         return super().icon
 
     @property
     def native_value(self):
+        """Return the entity's current value."""
         interface = self._pfsense_get_interface()
         try:
             return interface["status"]
@@ -492,6 +514,8 @@ class PfSenseCarpInterfaceSensor(PfSenseSensor):
 
 
 class PfSenseGatewaySensor(PfSenseSensor):
+    """Sensor for a gateway's status or latency metric."""
+
     def _pfsense_get_gateway_property_name(self):
         return self.entity_description.key.split(".")[3]
 
@@ -520,6 +544,7 @@ class PfSenseGatewaySensor(PfSenseSensor):
 
     @property
     def available(self) -> bool:
+        """Return whether the entity is available."""
         gateway = self._pfsense_get_gateway()
         prop = self._pfsense_get_gateway_property_name()
         if gateway is None or prop not in gateway:
@@ -535,6 +560,7 @@ class PfSenseGatewaySensor(PfSenseSensor):
 
     @property
     def extra_state_attributes(self):
+        """Return the entity's extra state attributes."""
         attributes = {}
         gateway = self._pfsense_get_gateway()
         gateway_detail = self._pfsense_get_gateway_details()
@@ -556,6 +582,7 @@ class PfSenseGatewaySensor(PfSenseSensor):
 
     @property
     def icon(self):
+        """Return the entity icon."""
         prop = self._pfsense_get_gateway_property_name()
         if prop == "status" and self.native_value != "online":
             return "mdi:close-network-outline"
@@ -563,6 +590,7 @@ class PfSenseGatewaySensor(PfSenseSensor):
 
     @property
     def native_value(self):
+        """Return the entity's current value."""
         gateway = self._pfsense_get_gateway()
         prop = self._pfsense_get_gateway_property_name()
 
@@ -585,6 +613,8 @@ class PfSenseGatewaySensor(PfSenseSensor):
 
 
 class PfSenseOpenVPNServerSensor(PfSenseSensor):
+    """Sensor for an OpenVPN server's client/throughput stats."""
+
     def _pfsense_get_server_property_name(self):
         return self.entity_description.key.split(".")[4]
 
@@ -603,6 +633,7 @@ class PfSenseOpenVPNServerSensor(PfSenseSensor):
 
     @property
     def available(self) -> bool:
+        """Return whether the entity is available."""
         server = self._pfsense_get_server()
         prop = self._pfsense_get_server_property_name()
         if server is None or prop not in server:
@@ -611,6 +642,7 @@ class PfSenseOpenVPNServerSensor(PfSenseSensor):
 
     @property
     def extra_state_attributes(self):
+        """Return the entity's extra state attributes."""
         attributes = {}
         server = self._pfsense_get_server()
         if server is None:
@@ -622,6 +654,7 @@ class PfSenseOpenVPNServerSensor(PfSenseSensor):
 
     @property
     def native_value(self):
+        """Return the entity's current value."""
         server = self._pfsense_get_server()
         prop = self._pfsense_get_server_property_name()
 

@@ -12,11 +12,13 @@ from homeassistant.core import HomeAssistant
 
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(enable_custom_integrations):
+    """Test helper."""
     return
 
 
 @pytest.fixture
 def mock_pfsense_client():
+    """Test helper."""
     client = AsyncMock()
     client.get_system_info.return_value = {
         "hostname": "router",
@@ -80,6 +82,7 @@ async def _setup(hass, entry, client):
 
 @pytest.mark.asyncio
 async def test_carp_sensor_on(hass: HomeAssistant, mock_pfsense_client):
+    """Test carp sensor on."""
     mock_pfsense_client.get_carp_status.return_value = True
     await _setup(hass, _entry("carp_on"), mock_pfsense_client)
 
@@ -92,6 +95,7 @@ async def test_carp_sensor_on(hass: HomeAssistant, mock_pfsense_client):
 
 @pytest.mark.asyncio
 async def test_carp_sensor_off(hass: HomeAssistant, mock_pfsense_client):
+    """Test carp sensor off."""
     mock_pfsense_client.get_carp_status.return_value = False
     await _setup(hass, _entry("carp_off"), mock_pfsense_client)
 

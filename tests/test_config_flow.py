@@ -31,6 +31,7 @@ def _client_mock(**overrides):
 
 @pytest.mark.asyncio
 async def test_form_user_success(hass: HomeAssistant):
+    """Test form user success."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": "user"}
     )
@@ -60,6 +61,7 @@ async def test_form_user_success(hass: HomeAssistant):
 
 @pytest.mark.asyncio
 async def test_form_user_invalid_auth(hass: HomeAssistant):
+    """Test form user invalid auth."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": "user"}
     )
@@ -76,6 +78,7 @@ async def test_form_user_invalid_auth(hass: HomeAssistant):
 
 @pytest.mark.asyncio
 async def test_reauth_flow_updates_key(hass: HomeAssistant):
+    """Test reauth flow updates key."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         version=3,
@@ -104,6 +107,7 @@ async def test_reauth_flow_updates_key(hass: HomeAssistant):
 
 @pytest.mark.asyncio
 async def test_options_flow(hass: HomeAssistant):
+    """Test options flow."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         version=3,

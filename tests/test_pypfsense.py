@@ -32,11 +32,13 @@ def _envelope(data, code=200, status="ok", response_id="SUCCESS", message=""):
 
 @pytest.fixture
 async def client():
+    """Test helper."""
     async with aiohttp.ClientSession() as session:
         yield Client(BASE, "test-key", session, {"verify_ssl": False})
 
 
 def test_dict_get():
+    """Test dict get."""
     data = {"a": {"b": [{"c": 1}]}, "n": {2: "x"}}
     assert dict_get(data, "a.b.0.c") == 1
     assert dict_get(data, "n.2") == "x"
@@ -45,11 +47,13 @@ def test_dict_get():
 
 
 def test_base_url_strips_path():
+    """Test base url strips path."""
     c = Client("https://pf.example:8444/ui/", "k", object())
     assert c._base == "https://pf.example:8444/api/v2"
 
 
 async def test_request_unwraps_data(client):
+    """Test request unwraps data."""
     with aioresponses() as m:
         m.get(
             f"{API}/system/hostname",
@@ -71,6 +75,7 @@ async def test_request_unwraps_data(client):
     ],
 )
 async def test_error_codes_map_to_exceptions(client, code, exc):
+    """Test error codes map to exceptions."""
     with aioresponses() as m:
         m.get(
             f"{API}/system/hostname",
@@ -84,6 +89,7 @@ async def test_error_codes_map_to_exceptions(client, code, exc):
 
 
 async def test_get_system_info_merges_endpoints(client):
+    """Test get system info merges endpoints."""
     with aioresponses() as m:
         m.get(
             f"{API}/status/system",
@@ -106,6 +112,7 @@ async def test_get_system_info_merges_endpoints(client):
 
 
 async def test_carp_status_reduces_to_bool(client):
+    """Test carp status reduces to bool."""
     with aioresponses() as m:
         m.get(
             f"{API}/status/carp",
@@ -130,6 +137,7 @@ def _patch_body(m):
 
 
 async def test_disable_filter_rule_patches_then_applies(client):
+    """Test disable filter rule patches then applies."""
     rules = [
         {"id": 4, "tracker": 111, "disabled": False, "descr": "r"},
         {
@@ -149,6 +157,7 @@ async def test_disable_filter_rule_patches_then_applies(client):
 
 
 async def test_disable_filter_rule_backfills_empty_statetype(client):
+    """Test disable filter rule backfills empty statetype."""
     # pfSense's GUI writes ``<statetype></statetype>``; a bare disabled PATCH then
     # fails FIELD_EMPTY_NOT_ALLOWED, so the client re-sends the default.
     rules = [{"id": 5, "tracker": 222, "disabled": False, "statetype": ""}]
@@ -165,6 +174,7 @@ async def test_disable_filter_rule_backfills_empty_statetype(client):
 
 
 async def test_kill_states_for_rule_resolves_alias_to_prefix(client):
+    """Test kill states for rule resolves alias to prefix."""
     rule = {"source": "kids", "destination": "any"}
     aliases = [{"name": "kids", "type": "network", "address": ["10.0.10.0/24"]}]
     with aioresponses() as m:
@@ -186,6 +196,7 @@ async def test_kill_states_for_rule_resolves_alias_to_prefix(client):
 
 
 async def test_kill_states_for_rule_skips_unresolvable_endpoints(client):
+    """Test kill states for rule skips unresolvable endpoints."""
     # ``any`` / ``(self)`` / a /25 network have no usable prefix -> no request.
     rule = {"source": "any", "destination": "(self)"}
     with aioresponses() as m:
@@ -194,6 +205,7 @@ async def test_kill_states_for_rule_skips_unresolvable_endpoints(client):
 
 
 async def test_build_telemetry_shape():
+    """Test build telemetry shape."""
     system = {
         "cpu_usage": 12.5,
         "cpu_count": 4,

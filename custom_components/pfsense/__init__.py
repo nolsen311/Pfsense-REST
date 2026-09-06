@@ -1,4 +1,4 @@
-"""Support for pfSense REST API"""
+"""Support for the pfSense REST API integration."""
 
 from __future__ import annotations
 
@@ -301,6 +301,8 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 
 
 class PfSenseData:
+    """Fetches and holds the pfSense poll state for a config entry."""
+
     def __init__(
         self, client: pfSenseClient, config_entry: ConfigEntry, hass: HomeAssistant
     ):
@@ -423,6 +425,7 @@ class CoordinatorEntityManager:
         process_entities_callback: Callable,
         async_add_entities: AddEntitiesCallback,
     ) -> None:
+        """Initialize the data holder."""
         self.hass = hass
         self.coordinator = coordinator
         self.config_entry = config_entry
@@ -437,6 +440,7 @@ class CoordinatorEntityManager:
 
     @callback
     def process_entities(self):
+        """Build entities from the current coordinator data and add new ones."""
         entities = self.process_entities_callback(self.hass, self.config_entry)
         new_entities = []
 
@@ -450,14 +454,16 @@ class CoordinatorEntityManager:
 
 
 class PfSenseEntity(CoordinatorEntity, RestoreEntity):
-    """base entity for pfSense"""
+    """Base entity for pfSense."""
 
     @property
     def coordinator_context(self):
+        """Return the coordinator context."""
         return None
 
     @property
     def device_info(self):
+        """Return device registry information."""
         state = self.coordinator.data
         if not state or "host_firmware_version" not in state:
             return None
@@ -473,12 +479,14 @@ class PfSenseEntity(CoordinatorEntity, RestoreEntity):
 
     @property
     def pfsense_device_name(self):
+        """Return the pfsense device name."""
         if self.config_entry.title:
             return self.config_entry.title
         return f"{self._get_pfsense_state_value('system_info.hostname')}.{self._get_pfsense_state_value('system_info.domain')}"
 
     @property
     def pfsense_device_unique_id(self):
+        """Return the pfsense device unique id."""
         return self._get_pfsense_state_value("system_info.netgate_device_id")
 
     def _get_pfsense_state_value(self, path, default=None):
@@ -490,11 +498,13 @@ class PfSenseEntity(CoordinatorEntity, RestoreEntity):
     async def service_start_service(
         self, service_name: str, service: dict | str | None = None
     ):
+        """Handle the pfsense.start_service service call."""
         await self._get_pfsense_client().start_service(service_name, service)
 
     async def service_stop_service(
         self, service_name: str, service: dict | str | None = None
     ):
+        """Handle the pfsense.stop_service service call."""
         await self._get_pfsense_client().stop_service(service_name, service)
 
     async def service_restart_service(
@@ -503,6 +513,7 @@ class PfSenseEntity(CoordinatorEntity, RestoreEntity):
         only_if_running: int | str | bool | None = False,
         service: dict | str | None = None,
     ):
+        """Handle the pfsense.restart_service service call."""
         client = self._get_pfsense_client()
         if str(only_if_running).lower() in ["true", "1"]:
             await client.restart_service_if_running(service_name, service)
@@ -510,22 +521,29 @@ class PfSenseEntity(CoordinatorEntity, RestoreEntity):
             await client.restart_service(service_name, service)
 
     async def service_reset_state_table(self):
+        """Handle the pfsense.reset_state_table service call."""
         await self._get_pfsense_client().reset_state_table()
 
     async def service_kill_states(self, source: str, destination: str | None = None):
+        """Handle the pfsense.kill_states service call."""
         await self._get_pfsense_client().kill_states(source, destination)
 
     async def service_system_halt(self):
+        """Handle the pfsense.system_halt service call."""
         await self._get_pfsense_client().system_halt()
 
     async def service_system_reboot(self):
+        """Handle the pfsense.system_reboot service call."""
         await self._get_pfsense_client().system_reboot()
 
     async def service_send_wol(self, interface: str, mac: str):
+        """Handle the pfsense.send_wol service call."""
         await self._get_pfsense_client().send_wol(interface, mac)
 
     async def service_set_default_gateway(self, gateway: str, ip_version: str):
+        """Handle the pfsense.set_default_gateway service call."""
         await self._get_pfsense_client().set_default_gateway(gateway, ip_version)
 
     async def service_exec_command(self, command: str, background: bool = False):
+        """Handle the pfsense.exec_command service call."""
         await self._get_pfsense_client().exec_command(command, background)

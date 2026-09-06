@@ -1,3 +1,5 @@
+"""Shared pytest fixtures for the pfSense test suite."""
+
 import pytest
 
 
