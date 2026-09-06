@@ -25,7 +25,14 @@ CONF_API_KEY = "api_key"
 
 UNDO_UPDATE_LISTENER = "undo_update_listener"
 
-PLATFORMS = ["sensor", "switch", "device_tracker", "binary_sensor", "update"]
+PLATFORMS = [
+    "sensor",
+    "switch",
+    "button",
+    "device_tracker",
+    "binary_sensor",
+    "update",
+]
 LOADED_PLATFORMS = "loaded_platforms"
 
 PFSENSE_CLIENT = "pfsense_client"

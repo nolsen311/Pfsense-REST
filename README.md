@@ -105,6 +105,11 @@ want in the entity settings.
 
 - **CARP Status** – whether CARP is enabled and not in maintenance mode.
 
+### Buttons
+
+- **Reboot Router**, **Halt Router**, **Reset State Table** – one-press
+  equivalents of the matching services.
+
 ### Device trackers
 
 - One `device_tracker` per MAC address you select in the options flow, marked
