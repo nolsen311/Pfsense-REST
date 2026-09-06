@@ -15,7 +15,12 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import slugify
 
 from . import CoordinatorEntityManager, PfSenseEntity
-from .const import COORDINATOR, DOMAIN
+from .const import (
+    CONF_RULE_SWITCH_KILL_STATES,
+    COORDINATOR,
+    DEFAULT_RULE_SWITCH_KILL_STATES,
+    DOMAIN,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -175,6 +180,19 @@ class PfSenseSwitch(PfSenseEntity, SwitchEntity):
     def extra_state_attributes(self):
         return None
 
+    async def _maybe_kill_rule_states(self, rule):
+        """Flush the state table for a rule's hosts after a toggle, if enabled."""
+        if not rule:
+            return
+        if not self.config_entry.options.get(
+            CONF_RULE_SWITCH_KILL_STATES, DEFAULT_RULE_SWITCH_KILL_STATES
+        ):
+            return
+        try:
+            await self._get_pfsense_client().kill_states_for_rule(rule)
+        except Exception:  # best effort - never fail the toggle over this
+            _LOGGER.warning("failed to kill states for toggled rule", exc_info=True)
+
 
 class PfSenseFilterSwitch(PfSenseSwitch):
     def _pfsense_get_tracker(self):
@@ -211,6 +229,7 @@ class PfSenseFilterSwitch(PfSenseSwitch):
         tracker = self._pfsense_get_tracker()
         client = self._get_pfsense_client()
         await client.enable_filter_rule_by_tracker(tracker)
+        await self._maybe_kill_rule_states(rule)
         await self.coordinator.async_refresh()
 
     async def async_turn_off(self, **kwargs):
@@ -221,6 +240,7 @@ class PfSenseFilterSwitch(PfSenseSwitch):
         tracker = self._pfsense_get_tracker()
         client = self._get_pfsense_client()
         await client.disable_filter_rule_by_tracker(tracker)
+        await self._maybe_kill_rule_states(rule)
         await self.coordinator.async_refresh()
 
 
@@ -274,6 +294,7 @@ class PfSenseNatSwitch(PfSenseSwitch):
             method = client.enable_nat_outbound_rule_by_created_time
 
         await method(tracker)
+        await self._maybe_kill_rule_states(rule)
         await self.coordinator.async_refresh()
 
     async def async_turn_off(self, **kwargs):
@@ -290,6 +311,7 @@ class PfSenseNatSwitch(PfSenseSwitch):
             method = client.disable_nat_outbound_rule_by_created_time
 
         await method(tracker)
+        await self._maybe_kill_rule_states(rule)
         await self.coordinator.async_refresh()
 
 

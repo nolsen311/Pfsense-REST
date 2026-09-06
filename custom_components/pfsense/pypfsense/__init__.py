@@ -13,6 +13,7 @@ The response envelope for every endpoint is::
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import re
 from typing import Any
@@ -343,6 +344,16 @@ class Client:
         data = await self._get("/firewall/nat/outbound/mappings")
         return data or []
 
+    # pfSense's own webConfigurator stores content-less config elements
+    # (``<statetype></statetype>``) that the REST API surfaces as empty strings.
+    # A PATCH re-validates the whole rule object, so those empty-but-required
+    # fields make an otherwise unrelated toggle fail with
+    # ``FIELD_EMPTY_NOT_ALLOWED``. Re-send them with the value pfSense would
+    # have defaulted to, which is a no-op for the rule's behaviour.
+    _RULE_REQUIRED_DEFAULTS = {
+        "/firewall/rule": {"statetype": "keep state"},
+    }
+
     async def _set_rule_disabled(
         self, path: str, rules: list[dict], match_key: str, match_value, disabled: bool
     ) -> None:
@@ -351,10 +362,12 @@ class Client:
                 continue
             if bool(rule.get("disabled")) == disabled:
                 return
+            payload = {"id": rule["id"], "disabled": disabled}
+            for field, fallback in self._RULE_REQUIRED_DEFAULTS.get(path, {}).items():
+                if not rule.get(field):
+                    payload[field] = fallback
             async with self._write_lock:
-                await self._request(
-                    "PATCH", path, payload={"id": rule["id"], "disabled": disabled}
-                )
+                await self._request("PATCH", path, payload=payload)
                 await self._apply("firewall")
             return
 
@@ -493,6 +506,60 @@ class Client:
             cmd += f" -k {_shq(destination)}"
         await self.exec_command(cmd)
 
+    async def kill_states_for_rule(self, rule: dict) -> None:
+        """Drop state-table entries for the hosts/networks a rule matches on.
+
+        Used when a rule switch is toggled so existing connections don't keep
+        flowing under the old ruleset. REST-only, best effort: this uses the
+        ``DELETE /firewall/states`` prefix filter, so rule endpoints it can't
+        turn into an IPv4 host / octet-aligned CIDR prefix -- ``any``,
+        ``(self)``, interface macros (``wan:ip``), negated aliases, non
+        octet-aligned networks (e.g. ``/25``), IPv6 -- are skipped rather than
+        falling back to ``pfctl``.
+        """
+        prefixes: set[str] = set()
+        for net in await self._rule_match_networks(rule):
+            prefix = _states_prefix(net)
+            if prefix:
+                prefixes.add(prefix)
+        if not prefixes:
+            return
+
+        async with self._write_lock:
+            for prefix in prefixes:
+                for field in ("source", "destination"):
+                    try:
+                        await self._request(
+                            "DELETE",
+                            "/firewall/states",
+                            params={f"{field}__startswith": prefix, "limit": 0},
+                        )
+                    except PfSenseAPIError:
+                        pass
+
+    async def _rule_match_networks(self, rule: dict) -> list:
+        """Concrete ``ip_network`` objects for a rule's source + destination."""
+        out: list = []
+        aliases: list[dict] | None = None
+        for side in ("source", "destination"):
+            value = rule.get(side)
+            if not isinstance(value, str):
+                continue
+            value = value.strip()
+            if not value or value.startswith("!") or value in ("any", "(self)"):
+                continue
+            if ":" in value:  # interface address macros, e.g. ``wan:ip``
+                continue
+            net = _as_network(value)
+            if net is not None:
+                out.append(net)
+                continue
+            # Otherwise treat it as an alias name and expand it.
+            if aliases is None:
+                aliases = await self._get("/firewall/aliases") or []
+            out.extend(_expand_alias_networks(aliases, value))
+        return out
+
     # ------------------------------------------------------- system control
 
     async def system_reboot(self, type: str = "normal") -> None:
@@ -533,6 +600,51 @@ class Client:
 def _shq(value: str) -> str:
     """Minimal shell single-quote escaping for command_prompt payloads."""
     return "'" + str(value).replace("'", "'\\''") + "'"
+
+
+def _as_network(value: str):
+    """Parse ``value`` as an IPv4/IPv6 host or CIDR, or ``None``."""
+    try:
+        return ipaddress.ip_network(value, strict=False)
+    except ValueError:
+        return None
+
+
+def _states_prefix(net) -> str | None:
+    """``str`` that ``firewall/state`` source/destination values start with for
+    every address in ``net``, or ``None`` if ``net`` can't be expressed that way.
+
+    States render endpoints as ``ip:port`` (IPv4) so a host becomes ``"ip:"``
+    and an octet-aligned network becomes its leading octets plus a dot.
+    """
+    if net.version != 4:
+        return None
+    if net.prefixlen == 32:
+        return f"{net.network_address}:"
+    if net.prefixlen in (8, 16, 24):
+        octets = str(net.network_address).split(".")
+        return ".".join(octets[: net.prefixlen // 8]) + "."
+    return None
+
+
+def _expand_alias_networks(aliases: list[dict], name: str, _depth: int = 3) -> list:
+    """Flatten a host/network alias (following nested aliases) to networks."""
+    if _depth <= 0:
+        return []
+    target = next((a for a in aliases if a.get("name") == name), None)
+    if target is None or target.get("type") not in ("host", "network"):
+        return []
+    found: list = []
+    for entry in target.get("address") or []:
+        entry = str(entry).strip()
+        if not entry or entry.startswith("!"):
+            continue
+        net = _as_network(entry)
+        if net is not None:
+            found.append(net)
+        else:  # a nested alias reference
+            found.extend(_expand_alias_networks(aliases, entry, _depth - 1))
+    return found
 
 
 def _flatten_params(params: dict | None) -> dict | None:

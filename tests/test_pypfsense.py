@@ -1,5 +1,7 @@
 """Unit tests for the async pfSense REST API v2 client."""
 
+import re
+
 import aiohttp
 import pytest
 from aioresponses import aioresponses
@@ -110,21 +112,70 @@ async def test_carp_status_reduces_to_bool(client):
         assert await client.get_carp_status() is False
 
 
+def _patch_body(m):
+    return next(
+        r for (method, url), reqs in m.requests.items()
+        for r in reqs if method == "PATCH"
+    ).kwargs["json"]
+
+
 async def test_disable_filter_rule_patches_then_applies(client):
     rules = [
         {"id": 4, "tracker": 111, "disabled": False, "descr": "r"},
-        {"id": 5, "tracker": 222, "disabled": False, "descr": "r2"},
+        {"id": 5, "tracker": 222, "disabled": False, "descr": "r2",
+         "statetype": "keep state"},
     ]
     with aioresponses() as m:
         m.get(f"{API}/firewall/rules", payload=_envelope(rules))
         m.patch(f"{API}/firewall/rule", payload=_envelope({"id": 5, "disabled": True}))
         m.post(f"{API}/firewall/apply", payload=_envelope({"applied": True}))
         await client.disable_filter_rule_by_tracker(222)
-        req = next(
-            r for (method, url), reqs in m.requests.items()
-            for r in reqs if method == "PATCH"
+        assert _patch_body(m) == {"id": 5, "disabled": True}
+
+
+async def test_disable_filter_rule_backfills_empty_statetype(client):
+    # pfSense's GUI writes ``<statetype></statetype>``; a bare disabled PATCH then
+    # fails FIELD_EMPTY_NOT_ALLOWED, so the client re-sends the default.
+    rules = [{"id": 5, "tracker": 222, "disabled": False, "statetype": ""}]
+    with aioresponses() as m:
+        m.get(f"{API}/firewall/rules", payload=_envelope(rules))
+        m.patch(f"{API}/firewall/rule", payload=_envelope({"id": 5, "disabled": True}))
+        m.post(f"{API}/firewall/apply", payload=_envelope({"applied": True}))
+        await client.disable_filter_rule_by_tracker(222)
+        assert _patch_body(m) == {
+            "id": 5,
+            "disabled": True,
+            "statetype": "keep state",
+        }
+
+
+async def test_kill_states_for_rule_resolves_alias_to_prefix(client):
+    rule = {"source": "kids", "destination": "any"}
+    aliases = [{"name": "kids", "type": "network", "address": ["10.0.10.0/24"]}]
+    with aioresponses() as m:
+        m.get(f"{API}/firewall/aliases", payload=_envelope(aliases))
+        m.delete(
+            re.compile(rf"{re.escape(API)}/firewall/states.*"),
+            payload=_envelope([]),
+            repeat=True,
         )
-        assert req.kwargs["json"] == {"id": 5, "disabled": True}
+        await client.kill_states_for_rule(rule)
+        deletes = [
+            str(url)
+            for (method, url), reqs in m.requests.items()
+            if method == "DELETE"
+            for _ in reqs
+        ]
+    assert any("source__startswith=10.0.10." in u for u in deletes)
+    assert any("destination__startswith=10.0.10." in u for u in deletes)
+
+
+async def test_kill_states_for_rule_skips_unresolvable_endpoints(client):
+    # ``any`` / ``(self)`` / a /25 network have no usable prefix -> no request.
+    rule = {"source": "any", "destination": "(self)"}
+    with aioresponses() as m:
+        await client.kill_states_for_rule(rule)
+        assert m.requests == {}
 
 
 async def test_build_telemetry_shape():
