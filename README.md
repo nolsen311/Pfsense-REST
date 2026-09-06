@@ -13,10 +13,11 @@ rules, services, aliases and routing from Home Assistant.
 > that pull requests don't get opened against DonTranQuiL/Pfsense-pro by mistake.
 > It is now maintained as a standalone project.
 
-[![Latest Release](https://img.shields.io/github/v/release/nolsen311/Pfsense-pro?style=for-the-badge&color=007ec6)](https://github.com/nolsen311/Pfsense-pro/releases)
-[![License](https://img.shields.io/github/license/nolsen311/Pfsense-pro?style=for-the-badge&color=007ec6)](https://github.com/nolsen311/Pfsense-pro/blob/main/LICENSE)
-[![Tests](https://img.shields.io/github/actions/workflow/status/nolsen311/Pfsense-pro/pytest.yml?style=for-the-badge&label=TESTS&color=5dbb0f)](https://github.com/nolsen311/Pfsense-pro/actions/workflows/pytest.yml)
-[![HACS Validation](https://img.shields.io/github/actions/workflow/status/nolsen311/Pfsense-pro/hacs.yaml?style=for-the-badge&label=HACS&color=5dbb0f)](https://github.com/nolsen311/Pfsense-pro/actions/workflows/hacs.yaml)
+[![Latest Release](https://img.shields.io/github/v/release/nolsen311/Pfsense-REST?style=for-the-badge&color=007ec6)](https://github.com/nolsen311/Pfsense-REST/releases)
+[![License](https://img.shields.io/github/license/nolsen311/Pfsense-REST?style=for-the-badge&color=007ec6)](https://github.com/nolsen311/Pfsense-REST/blob/main/LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/nolsen311/Pfsense-REST/hass-ci.yml?branch=main&style=for-the-badge&label=CI&color=5dbb0f)](https://github.com/nolsen311/Pfsense-REST/actions/workflows/hass-ci.yml)
+[![hassfest](https://img.shields.io/github/actions/workflow/status/nolsen311/Pfsense-REST/hassfest.yaml?branch=main&style=for-the-badge&label=HASSFEST&color=5dbb0f)](https://github.com/nolsen311/Pfsense-REST/actions/workflows/hassfest.yaml)
+[![HACS Validation](https://img.shields.io/github/actions/workflow/status/nolsen311/Pfsense-REST/hacs.yaml?branch=main&style=for-the-badge&label=HACS&color=5dbb0f)](https://github.com/nolsen311/Pfsense-REST/actions/workflows/hacs.yaml)
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-ff6e27?style=for-the-badge)](https://hacs.xyz/)
 
 ---
