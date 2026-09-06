@@ -24,9 +24,11 @@ from .const import (
     CONF_DEVICE_TRACKER_ENABLED,
     CONF_DEVICE_TRACKER_SCAN_INTERVAL,
     CONF_DEVICES,
+    CONF_RULE_SWITCH_KILL_STATES,
     DEFAULT_DEVICE_TRACKER_CONSIDER_HOME,
     DEFAULT_DEVICE_TRACKER_ENABLED,
     DEFAULT_DEVICE_TRACKER_SCAN_INTERVAL,
+    DEFAULT_RULE_SWITCH_KILL_STATES,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_VERIFY_SSL,
     DOMAIN,
@@ -235,6 +237,13 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     DEFAULT_DEVICE_TRACKER_CONSIDER_HOME,
                 ),
             ): vol.All(vol.Coerce(int), vol.Clamp(min=0, max=600)),
+            vol.Optional(
+                CONF_RULE_SWITCH_KILL_STATES,
+                default=opts.get(
+                    CONF_RULE_SWITCH_KILL_STATES,
+                    DEFAULT_RULE_SWITCH_KILL_STATES,
+                ),
+            ): bool,
         }
         return self.async_show_form(step_id="init", data_schema=vol.Schema(base_schema))
 

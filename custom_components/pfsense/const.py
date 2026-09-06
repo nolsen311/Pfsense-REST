@@ -56,6 +56,9 @@ DEFAULT_DEVICE_TRACKER_CONSIDER_HOME = 0
 
 CONF_DEVICES = "devices"
 
+CONF_RULE_SWITCH_KILL_STATES = "rule_switch_kill_states"
+DEFAULT_RULE_SWITCH_KILL_STATES = False
+
 COUNT = "count"
 
 BYTES_RECEIVED = "bytes_received"

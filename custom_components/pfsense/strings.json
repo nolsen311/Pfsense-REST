@@ -42,7 +42,8 @@
           "scan_interval": "Scan Interval (seconds)",
           "device_tracker_enabled": "Enable Device Tracker",
           "device_tracker_scan_interval": "Device Tracker Scan Interval (seconds)",
-          "device_tracker_consider_home": "Device Tracker Consider Home (seconds)"
+          "device_tracker_consider_home": "Device Tracker Consider Home (seconds)",
+          "rule_switch_kill_states": "Reset matching states when a rule switch is toggled"
         }
       },
       "device_tracker": {
