@@ -27,8 +27,10 @@ Resolved on hardware since the first draft — see "Findings from live hardware"
 `DELETE /api/v2/firewall/states` source/dest filtering; the `disabled` field on
 GUI-authored rules; `PATCH /firewall/rule` and empty `statetype`.
 
-The integration has since been rewritten and shipped (see repo history through
-`v0.10.0`); this document is kept as the reference for pfRest behaviour.
+The integration has since been rewritten and shipped (all seven phases below are
+done; see repo history through `v0.10.1`). This document is now two things: the
+reference for pfRest behaviour, and — in "Project state & conventions" — how the
+repo is built, tested and released.
 
 ## Findings from live hardware
 
@@ -103,6 +105,74 @@ tags existed; anyone whose HACS recorded `2.x`/`3.x` must remove and re-add the
 integration. Keep the tag, `manifest.json`, and shipped content in lockstep
 (see `.github/workflows/release.yml`, which now *verifies* tag == manifest
 rather than rewriting the manifest after the tag).
+
+## Project state & conventions
+
+Everything below the migration plan is done and released. This section is the
+current state of the repo — read it before touching tooling, tests or a release.
+
+### Identity
+
+- Repo: `nolsen311/Pfsense-REST` (was `Pfsense-REST` created from, then
+  **de-forked** from, `DonTranQuiL/Pfsense-pro` so PRs don't land upstream).
+  HACS name is "Pfsense Pro"; integration `domain` is `pfsense`.
+- The `pfsense` domain shares its brand icon with `travisghansen/hass-pfsense`
+  via `home-assistant/brands` (`custom_integrations/pfsense/`, added upstream in
+  2021). Nothing icon-related lives in this repo; a 0-byte `brand/icon.png` stub
+  is dead weight. Changing the domain would forfeit the inherited icon.
+
+### Lint / format
+
+- `pyproject.toml` `[tool.ruff]` is the **Home Assistant core selection,
+  verbatim** (kept in sync manually with `home-assistant/core`'s `pyproject.toml`).
+  There is **no** project-specific ignore block — the whole codebase passes
+  `ruff check .` and `ruff format --check .` against the full HA rule set.
+  `required-version = ">=0.16.5"`.
+- Two per-file-ignores beyond HA's: `tests/**` also ignores `SLF001` (tests poke
+  internals) and relative imports are allowed under `custom_components/*/*`.
+- A handful of `# noqa` with reasons remain in-tree (`C901` on the two
+  entity-builder callbacks in `sensor.py`; `PLC0415` on the deferred
+  `services.py` import that breaks a cycle; `BLE001` is not actually raised by
+  modern ruff on the log-and-continue handlers).
+- `.github/workflows/codechecker.yml` pins **`ruff==0.16.6`** and runs
+  `ruff check --fix . && ruff format .`, then `git-auto-commit`s the result
+  onto the branch (`ref: ${{ github.head_ref || github.ref_name }}` so it's not
+  a detached checkout). Bump the pin and the `pyproject.toml` rules together.
+
+### Tests
+
+- `tests/` is a package (`tests/__init__.py`). Run:
+  `pytest -v tests/ --cov=custom_components/pfsense/`.
+- Uses `aioresponses` (not `respx`) for the client unit tests and
+  `pytest-homeassistant-custom-component` for the entity/setup tests.
+- HA-version gotchas that were hit and fixed — keep them in mind:
+  - `DataUpdateCoordinator(...)` **must** be passed `config_entry=entry`, and
+    `async_config_entry_first_refresh()` is only valid while the entry is in
+    `SETUP_IN_PROGRESS`. Setup tests must go through
+    `hass.config_entries.async_setup(entry.entry_id)`, not call
+    `async_setup_entry(hass, entry)` directly.
+- CI workflow is `.github/workflows/hass-ci.yml` (Python 3.13, `pull_request` +
+  `push` to `main`, path-filtered to `custom_components/**` and `tests/**`).
+
+### Release process
+
+1. Bump `custom_components/pfsense/manifest.json` `version` in a normal commit
+   on the feature branch. **Never let the tag out-run the manifest** — that was
+   the 0.9.x tag/manifest-lag bug.
+2. Merge to `main` (a merge commit or rebase, so per-commit history survives).
+3. Create a GitHub Release: tag `v<version>` on `main`, publish (not draft, not
+   pre-release). `.github/workflows/release.yml` (trigger: `release: published`)
+   **verifies `v<version>` == `manifest.json` version** and fails loudly on a
+   mismatch, then builds and attaches `pfsense.zip`. It no longer edits the
+   manifest.
+4. `.github/workflows/release-drafter.yml` drafts notes from PR labels
+   (config: `.github/release-drafter.yml`); its suggested version is a plain
+   patch bump off the last tag — override the tag when it's wrong.
+- Version must only ever increase (HACS treats a lower manifest/tag as a
+  downgrade and shows no update — see the HACS aside above).
+- Released so far: `v0.9.0`, `v0.9.1`, `v0.9.3` (skipped `v0.9.2`), `v0.10.0`;
+  `v0.10.1` in progress (docs/tooling + the CARP binary sensor now enabled by
+  default).
 
 ## Target environment (confirmed)
 
@@ -466,17 +536,18 @@ state. (Weak optional substitute: `GET /api/v2/status/logs/system`.)
 
 ## Manifest / housekeeping
 
-- `manifest.json`: `codeowners`, `documentation`, `issue_tracker` still point at
-  `DonTranQuiL/pfsense-pro` — update to `nolsen311/Pfsense-pro`. Bump `version`.
-- `requirements.txt` / `requirements_test.txt`: replace `respx` with
-  `aioresponses`.
-- The `ai_engineer/` GitHub Actions (`ai-repair`, `ai-review`, `ai-test-writer`,
-  `ai-dependency-updater`, …) may auto-open PRs during the rewrite — pause or
-  scope them first.
-- `README.md`'s "optimized XML-RPC non-blocking mutex pipeline" headline describes
-  exactly what is being removed — rewrite it last.
+All done — recorded here for history:
 
-## Suggested phased order
+- `manifest.json` `documentation` / `issue_tracker` now point at
+  `nolsen311/Pfsense-REST`; `codeowners` is `@nolsen311`.
+- `respx` → `aioresponses` in the test requirements.
+- The `ai_engineer/` directory and its GitHub Actions were removed.
+- `README.md` was rewritten for REST v2 and carries the fork-origin / de-fork
+  note; the badges point at `nolsen311/Pfsense-REST` and the real workflows.
+
+## Phased order (all shipped in `v0.10.0`)
+
+All seven phases are complete; kept for the record.
 
 1. **Auth / connection layer + async `pypfsense` skeleton + config flow.** API-key
    entry, non-standard port, reauth step, error mapping, v3 migration. Get "add
@@ -495,13 +566,16 @@ state. (Weak optional substitute: `GET /api/v2/status/logs/system`.)
 
 ## Testing
 
-- Fixtures: the captured live responses, one per endpoint, with hostnames / IPs /
-  serial / `netgate_id` / MACs redacted.
+See "Project state & conventions → Tests" above for how the suite is wired
+today. Original intent, still valid:
+
 - `aioresponses` for request-construction, envelope-parsing, and error-handling
   unit tests — all coverable without hardware.
 - Not unit-testable: that a `PATCH` + `/apply` actually commits on-box; the
   OpenVPN / CARP / package response shapes (absent on the test box). Smoke-test
-  those on real hardware before calling a phase done.
+  those on real hardware. The state-table `__startswith` delete and the
+  `disabled` / `statetype` behaviours *were* verified on hardware — see
+  "Findings from live hardware".
 
 ## Reference
 
