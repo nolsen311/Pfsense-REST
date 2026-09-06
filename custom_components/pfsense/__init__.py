@@ -3,21 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 import copy
+from datetime import timedelta
 import logging
 import re
 import time
-from collections.abc import Callable
-from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
-    CONF_SCAN_INTERVAL,
-    CONF_URL,
-    CONF_VERIFY_SSL,
-)
+from homeassistant.const import CONF_SCAN_INTERVAL, CONF_URL, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -47,8 +43,7 @@ from .const import (
     SHOULD_RELOAD,
     UNDO_UPDATE_LISTENER,
 )
-from .pypfsense import Client as pfSenseClient
-from .pypfsense import PfSenseAuthError, PfSensePrivilegeError
+from .pypfsense import Client as pfSenseClient, PfSenseAuthError, PfSensePrivilegeError
 from .services import ServiceRegistrar
 
 _LOGGER = logging.getLogger(__name__)
@@ -62,8 +57,8 @@ async def async_save_cache(hass: HomeAssistant, entry_id: str, data: dict):
     store = Store(hass, STORAGE_VERSION, f"{DOMAIN}_{entry_id}_cache")
     try:
         await store.async_save(data)
-    except Exception as e:  # noqa: BLE001 - a cache write must never break the poll
-        _LOGGER.error(f"Failed to save pfSense cache: {e}")
+    except (OSError, HomeAssistantError, ValueError) as err:
+        _LOGGER.error("Failed to save pfSense cache: %s", err)
 
 
 async def async_load_cache(hass: HomeAssistant, entry_id: str):
@@ -71,8 +66,8 @@ async def async_load_cache(hass: HomeAssistant, entry_id: str):
     store = Store(hass, STORAGE_VERSION, f"{DOMAIN}_{entry_id}_cache")
     try:
         return await store.async_load()
-    except Exception as e:  # noqa: BLE001 - any cache error -> live poll
-        _LOGGER.error(f"Failed to load pfSense cache: {e}")
+    except (OSError, HomeAssistantError, ValueError) as err:
+        _LOGGER.error("Failed to load pfSense cache: %s", err)
         return None
 
 
@@ -186,13 +181,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
             return new_state
         except (PfSenseAuthError, PfSensePrivilegeError) as err:
             raise ConfigEntryAuthFailed(str(err)) from err
-        except Exception as err:  # noqa: BLE001 - any poll error -> use cache
+        except Exception as err:
             _LOGGER.warning("pfSense poll failed (%s); trying the local cache", err)
             cached_data = await async_load_cache(hass, entry.entry_id)
             if cached_data:
                 data._state = cached_data
                 return cached_data
-            raise UpdateFailed(f"poll failed and no cache available: {err}")
+            raise UpdateFailed(f"poll failed and no cache available: {err}") from err
 
     coordinator = DataUpdateCoordinator(
         hass,
@@ -224,11 +219,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
                 return new_dt_state
             except (PfSenseAuthError, PfSensePrivilegeError) as err:
                 raise ConfigEntryAuthFailed(str(err)) from err
-            except Exception as err:  # noqa: BLE001 - keep last known state
+            except Exception as err:
                 _LOGGER.warning("pfSense device tracker update failed: %s", err)
                 if device_tracker_data._state:
                     return device_tracker_data._state
-                raise UpdateFailed(err)
+                raise UpdateFailed(err) from err
 
         device_tracker_coordinator = DataUpdateCoordinator(
             hass,
@@ -495,7 +490,7 @@ class PfSenseEntity(CoordinatorEntity, RestoreEntity):
     async def service_restart_service(
         self,
         service_name: str,
-        only_if_running: int | str | None | bool = False,
+        only_if_running: int | str | bool | None = False,
         service: dict | str | None = None,
     ):
         client = self._get_pfsense_client()

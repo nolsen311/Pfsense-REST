@@ -3,9 +3,6 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from homeassistant.const import CONF_URL, CONF_VERIFY_SSL
-from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.pfsense.const import (
@@ -15,6 +12,9 @@ from custom_components.pfsense.const import (
     DOMAIN,
 )
 from custom_components.pfsense.pypfsense import PfSenseAuthError
+from homeassistant.const import CONF_URL, CONF_VERIFY_SSL
+from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
 
 
 def _client_mock(**overrides):

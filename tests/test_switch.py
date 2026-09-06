@@ -3,10 +3,10 @@
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
-from homeassistant.components.switch import SwitchEntityDescription
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.pfsense.switch import PfSenseServiceSwitch
+from homeassistant.components.switch import SwitchEntityDescription
 
 
 @pytest.fixture

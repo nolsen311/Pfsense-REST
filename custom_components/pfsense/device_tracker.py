@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import logging
 import time
-from collections.abc import Mapping
 from typing import Any
+
+from mac_vendor_lookup import AsyncMacLookup
 
 from homeassistant.components.device_tracker import SourceType
 from homeassistant.components.device_tracker.config_entry import ScannerEntity
@@ -14,14 +16,11 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.device_registry import (
     CONNECTION_NETWORK_MAC,
-)
-from homeassistant.helpers.device_registry import (
     async_get as async_get_dev_reg,
 )
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import slugify
-from mac_vendor_lookup import AsyncMacLookup
 
 from . import CoordinatorEntityManager, PfSenseEntity, dict_get
 from .const import (
@@ -89,17 +88,16 @@ async def async_setup_entry(
         if configured_mac_addresses:
             mac_addresses = configured_mac_addresses
             enabled_default = True
-        else:
-            if device_per_arp_entry:
-                arp_entries = dict_get(state, "arp_table")
-                if not arp_entries:
-                    return []
+        elif device_per_arp_entry:
+            arp_entries = dict_get(state, "arp_table")
+            if not arp_entries:
+                return []
 
-                mac_addresses = [
-                    mac_address.lower()
-                    for arp_entry in arp_entries
-                    if (mac_address := arp_entry.get("mac_address"))
-                ]
+            mac_addresses = [
+                mac_address.lower()
+                for arp_entry in arp_entries
+                if (mac_address := arp_entry.get("mac_address"))
+            ]
 
         for mac_address in mac_addresses:
             mac_vendor = None

@@ -5,17 +5,13 @@ from __future__ import annotations
 import logging
 from urllib.parse import urlparse
 
-import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
+
 from homeassistant import config_entries
-from homeassistant.const import (
-    CONF_NAME,
-    CONF_SCAN_INTERVAL,
-    CONF_URL,
-    CONF_VERIFY_SSL,
-)
+from homeassistant.const import CONF_NAME, CONF_SCAN_INTERVAL, CONF_URL, CONF_VERIFY_SSL
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+import homeassistant.helpers.config_validation as cv
 from homeassistant.util import slugify
 
 from .const import (

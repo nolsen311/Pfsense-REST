@@ -1,6 +1,7 @@
 import logging
 
 import voluptuous as vol
+
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.entity import Entity

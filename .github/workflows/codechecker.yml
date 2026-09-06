@@ -26,7 +26,9 @@ jobs:
           python-version: "3.12"
 
       - name: Install ruff
-        run: pip install ruff
+        # Pinned so a new ruff release can't turn CI red on an unrelated PR.
+        # Bump together with the rules in pyproject.toml.
+        run: pip install "ruff==0.16.6"
 
       - name: Auto-fix and format Python code
         run: |

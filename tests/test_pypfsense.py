@@ -3,8 +3,8 @@
 import re
 
 import aiohttp
-import pytest
 from aioresponses import aioresponses
+import pytest
 
 from custom_components.pfsense.pypfsense import (
     Client,

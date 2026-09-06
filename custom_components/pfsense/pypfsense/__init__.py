@@ -163,7 +163,7 @@ class Client:
     # -------------------------------------------------------------- identity
 
     async def get_system_info(self) -> dict:
-        """hostname / domain / serial / netgate id / platform, old-client shape."""
+        """Hostname / domain / serial / netgate id / platform, old-client shape."""
         status, hostname = await asyncio.gather(
             self._get("/status/system"),
             self._get("/system/hostname"),
@@ -654,7 +654,7 @@ def _expand_alias_networks(aliases: list[dict], name: str, _depth: int = 3) -> l
 
 
 def _flatten_params(params: dict | None) -> dict | None:
-    """aiohttp needs str values; drop ``None`` and stringify the rest."""
+    """Aiohttp needs str values; drop ``None`` and stringify the rest."""
     if not params:
         return None
     return {k: str(v) for k, v in params.items() if v is not None}

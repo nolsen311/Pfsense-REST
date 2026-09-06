@@ -552,10 +552,9 @@ class PfSenseGatewaySensor(PfSenseSensor):
                 if attr in gateway_detail:
                     value = gateway_detail[attr]
                     attributes[attr] = value
-                else:
-                    if attr == "isdefaultgw":
-                        value = False
-                        attributes[attr] = value
+                elif attr == "isdefaultgw":
+                    value = False
+                    attributes[attr] = value
         return attributes
 
     @property
