@@ -16,7 +16,10 @@ jobs:
       - uses: actions/checkout@v6
         with:
           # Required so the bot can push changes back
-          fetch-depth: 0 
+          fetch-depth: 0
+          # Check out the real branch (not the detached pull_request merge ref)
+          # so git-auto-commit can commit the ruff fixes onto it.
+          ref: ${{ github.head_ref || github.ref_name }}
 
       - uses: actions/setup-python@v6
         with:
