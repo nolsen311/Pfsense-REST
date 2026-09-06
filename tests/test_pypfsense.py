@@ -62,7 +62,7 @@ async def test_request_unwraps_data(client):
 
 
 @pytest.mark.parametrize(
-    "code,exc",
+    ("code", "exc"),
     [
         (401, PfSenseAuthError),
         (403, PfSensePrivilegeError),

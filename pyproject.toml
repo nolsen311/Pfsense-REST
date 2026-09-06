@@ -159,19 +159,7 @@ ignore = [
   "A001",    # `property` used as a loop variable shadows the builtin
   "SLF001",  # private-member access (coordinator `_state` fallback path)
   "INP001",  # `tests/` is not a package
-  "SIM105",  # use contextlib.suppress(...)
-  "TRY300",  # move the return into an else block
-  "TRY301",  # abstract the raise into an inner function
-  "PERF203", # try/except inside a loop
-  "PERF403", # manual dict comprehension
-  "RET504",  # unnecessary assignment before return
-  "C901",    # function is too complex
-  "PLC0415", # import should be at top level
   "PT022",   # fixture yields without teardown
-  "PT006",   # parametrize names as a tuple/list
-  "FURB171", # `x in (y,)` -> `x == y`
-  "C416",    # unnecessary comprehension
-  "N806",    # non-lowercase variable in function
 ]
 
 [tool.ruff.lint.flake8-pytest-style]

@@ -75,15 +75,14 @@ async def async_load_cache(hass: HomeAssistant, entry_id: str):
 
 
 def dict_get(data: dict, path: str, default=None):
-    pathList = re.split(r"\.", path, flags=re.IGNORECASE)
+    """Traverse a nested dict/list by a dotted path; numeric segments index lists."""
     result = data
-    for key in pathList:
-        try:
+    try:
+        for key in re.split(r"\.", path, flags=re.IGNORECASE):
             key = int(key) if key.isnumeric() else key
             result = result[key]
-        except (KeyError, IndexError, TypeError):
-            result = default
-            break
+    except (KeyError, IndexError, TypeError):
+        return default
     return result
 
 
@@ -172,22 +171,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     async def async_update_data():
         """Fetch data from pfSense, falling back to the on-disk cache on failure."""
+        new_state = None
         try:
             async with asyncio.timeout(scan_interval - 1):
                 new_state = await data.update()
-            if not new_state:
-                raise UpdateFailed("no data received from pfSense")
-            await async_save_cache(hass, entry.entry_id, new_state)
-            return new_state
         except (PfSenseAuthError, PfSensePrivilegeError) as err:
             raise ConfigEntryAuthFailed(str(err)) from err
-        except Exception as err:
-            _LOGGER.warning("pfSense poll failed (%s); trying the local cache", err)
-            cached_data = await async_load_cache(hass, entry.entry_id)
-            if cached_data:
-                data._state = cached_data
-                return cached_data
-            raise UpdateFailed(f"poll failed and no cache available: {err}") from err
+        except Exception:
+            _LOGGER.warning(
+                "pfSense poll failed; trying the local cache", exc_info=True
+            )
+        else:
+            if new_state:
+                await async_save_cache(hass, entry.entry_id, new_state)
+                return new_state
+
+        cached_data = await async_load_cache(hass, entry.entry_id)
+        if cached_data:
+            data._state = cached_data
+            return cached_data
+        raise UpdateFailed("pfSense poll failed and no usable cache is available")
 
     coordinator = DataUpdateCoordinator(
         hass,
@@ -209,21 +212,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
         async def async_update_device_tracker_data():
             """Fetch the ARP table from pfSense."""
+            new_dt_state = None
             try:
                 async with asyncio.timeout(device_tracker_scan_interval - 1):
                     new_dt_state = await device_tracker_data.update(
                         {"scope": "device_tracker"}
                     )
-                if not new_dt_state:
-                    raise UpdateFailed("no device tracker data received")
-                return new_dt_state
             except (PfSenseAuthError, PfSensePrivilegeError) as err:
                 raise ConfigEntryAuthFailed(str(err)) from err
-            except Exception as err:
-                _LOGGER.warning("pfSense device tracker update failed: %s", err)
-                if device_tracker_data._state:
-                    return device_tracker_data._state
-                raise UpdateFailed(err) from err
+            except Exception:
+                _LOGGER.warning("pfSense device tracker update failed", exc_info=True)
+            else:
+                if new_dt_state:
+                    return new_dt_state
+
+            if device_tracker_data._state:
+                return device_tracker_data._state
+            raise UpdateFailed("pfSense device tracker update failed")
 
         device_tracker_coordinator = DataUpdateCoordinator(
             hass,

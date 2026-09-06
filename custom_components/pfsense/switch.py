@@ -352,10 +352,9 @@ class PfSenseServiceSwitch(PfSenseSwitch):
     @property
     def is_on(self):
         service = self._pfsense_get_service()
-        property = self._pfsense_get_property_name()
+        prop = self._pfsense_get_property_name()
         try:
-            value = service[property]
-            return value
+            return service[prop]
         except KeyError:
             return STATE_UNKNOWN
 

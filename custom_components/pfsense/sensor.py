@@ -34,7 +34,7 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
-async def async_setup_entry(
+async def async_setup_entry(  # noqa: C901 - flat per-telemetry-type entity builder
     hass: HomeAssistant,
     config_entry: ConfigEntry,
     async_add_entities: entity_platform.AddEntitiesCallback,
@@ -42,11 +42,11 @@ async def async_setup_entry(
     """Set up the pfSense sensors."""
 
     @callback
-    def process_entities_callback(hass, config_entry):
+    def process_entities_callback(hass, config_entry):  # noqa: C901 - see above
         data = hass.data[DOMAIN][config_entry.entry_id]
         coordinator = data[COORDINATOR]
         state = coordinator.data
-        resources = [sensor_id for sensor_id in SENSOR_TYPES]
+        resources = list(SENSOR_TYPES)
 
         entities = []
 
@@ -257,7 +257,7 @@ async def async_setup_entry(
                 if native_unit_of_measurement is None and "bytes" in property:
                     native_unit_of_measurement = UnitOfInformation.BYTES
 
-                if property in ["connected_client_count"]:
+                if property == "connected_client_count":
                     native_unit_of_measurement = "clients"
 
                 if "bytes" in property:
@@ -567,24 +567,24 @@ class PfSenseGatewaySensor(PfSenseSensor):
     @property
     def native_value(self):
         gateway = self._pfsense_get_gateway()
-        property = self._pfsense_get_gateway_property_name()
+        prop = self._pfsense_get_gateway_property_name()
 
         if gateway is None:
             return STATE_UNKNOWN
 
         try:
-            value = gateway[property]
-            if property in ["stddev", "delay", "loss"] and isinstance(value, str):
-                value = re.sub(r"[^0-9\.]*", "", value)
-                if len(value) > 0:
-                    value = float(value)
-
-            if isinstance(value, str) and len(value) < 1:
-                return STATE_UNKNOWN
-
-            return value
+            value = gateway[prop]
         except KeyError:
             return STATE_UNKNOWN
+
+        if prop in ["stddev", "delay", "loss"] and isinstance(value, str):
+            value = re.sub(r"[^0-9\.]*", "", value)
+            if len(value) > 0:
+                value = float(value)
+
+        if isinstance(value, str) and len(value) < 1:
+            return STATE_UNKNOWN
+        return value
 
 
 class PfSenseOpenVPNServerSensor(PfSenseSensor):

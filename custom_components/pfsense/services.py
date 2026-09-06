@@ -50,8 +50,8 @@ class ServiceRegistrar:
 
         _data.add("loaded")
 
-        # --- DEFERRED RUNTIME INJECTION PATCH ---
-        from . import PfSenseEntity
+        # Deferred to break the services <-> __init__ import cycle.
+        from . import PfSenseEntity  # noqa: PLC0415
 
         async def service_update_alias(
             self_entity,

@@ -13,6 +13,7 @@ The response envelope for every endpoint is::
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import ipaddress
 import logging
 import re
@@ -30,12 +31,12 @@ API_BASE = "/api/v2"
 def dict_get(data: dict, path: str, default=None):
     """Traverse a nested dict/list by a dotted path. Numeric segments index lists."""
     result = data
-    for key in re.split(r"\.", path):
-        try:
+    try:
+        for key in re.split(r"\.", path):
             key = int(key) if key.isnumeric() else key
             result = result[key]
-        except (KeyError, IndexError, TypeError):
-            return default
+    except (KeyError, IndexError, TypeError):
+        return default
     return result
 
 
@@ -300,12 +301,10 @@ class Client:
             if entry.get("ip_address") == ip:
                 entry_id = entry.get("id", ip)
                 break
-        try:
+        with contextlib.suppress(PfSenseNotFoundError):
             await self._request(
                 "DELETE", "/diagnostics/arp_table/entry", params={"id": entry_id}
             )
-        except PfSenseNotFoundError:
-            pass
 
     # ------------------------------------------------------------ gateways
 
@@ -371,9 +370,15 @@ class Client:
             if bool(rule.get("disabled")) == disabled:
                 return
             payload = {"id": rule["id"], "disabled": disabled}
-            for field, fallback in self._RULE_REQUIRED_DEFAULTS.get(path, {}).items():
-                if not rule.get(field):
-                    payload[field] = fallback
+            payload.update(
+                {
+                    field: fallback
+                    for field, fallback in self._RULE_REQUIRED_DEFAULTS.get(
+                        path, {}
+                    ).items()
+                    if not rule.get(field)
+                }
+            )
             async with self._write_lock:
                 await self._request("PATCH", path, payload=payload)
                 await self._apply("firewall")
@@ -534,14 +539,12 @@ class Client:
         async with self._write_lock:
             for prefix in prefixes:
                 for field in ("source", "destination"):
-                    try:
+                    with contextlib.suppress(PfSenseAPIError):
                         await self._request(
                             "DELETE",
                             "/firewall/states",
                             params={f"{field}__startswith": prefix, "limit": 0},
                         )
-                    except PfSenseAPIError:
-                        pass
 
     async def _rule_match_networks(self, rule: dict) -> list:
         """Concrete ``ip_network`` objects for a rule's source + destination."""
@@ -569,16 +572,14 @@ class Client:
     # ------------------------------------------------------- system control
 
     async def system_reboot(self, type: str = "normal") -> None:
-        try:
+        # The connection drops as the box goes down -- that is success.
+        with contextlib.suppress(PfSenseConnectionError):
             await self._request("POST", "/diagnostics/reboot", payload={})
-        except PfSenseConnectionError:
-            pass  # connection drops as the box goes down
 
     async def system_halt(self) -> None:
-        try:
+        # The connection drops as the box goes down -- that is success.
+        with contextlib.suppress(PfSenseConnectionError):
             await self._request("POST", "/diagnostics/halt_system", payload={})
-        except PfSenseConnectionError:
-            pass
 
     # ------------------------------------------------------------------ wol
 

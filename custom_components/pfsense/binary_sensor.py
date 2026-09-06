@@ -30,7 +30,7 @@ async def async_setup_entry(
     def process_entities_callback(hass, config_entry):
         data = hass.data[DOMAIN][config_entry.entry_id]
         coordinator = data[COORDINATOR]
-        entities = [
+        return [
             PfSenseCarpStatusBinarySensor(
                 config_entry,
                 coordinator,
@@ -42,7 +42,6 @@ async def async_setup_entry(
                 False,
             )
         ]
-        return entities
 
     cem = CoordinatorEntityManager(
         hass,
