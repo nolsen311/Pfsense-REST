@@ -2,9 +2,7 @@
 
 import logging
 import re
-import time
 
-from awesomeversion import AwesomeVersion
 from homeassistant.components.sensor import (
     SensorEntity,
     SensorEntityDescription,
@@ -17,13 +15,11 @@ from homeassistant.const import (
     UnitOfDataRate,
     UnitOfInformation,
     UnitOfTime,
-    __version__,
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import slugify
-from homeassistant.util.dt import utc_from_timestamp
 
 from . import CoordinatorEntityManager, PfSenseEntity, dict_get
 from .const import (
@@ -55,25 +51,18 @@ async def async_setup_entry(
         entities = []
 
         for sensor_type in resources:
-            enabled_default = False
-            if sensor_type in [
-                "telemetry.pfstate.used_percent",
+            enabled_default = sensor_type in [
                 "telemetry.mbuf.used_percent",
                 "telemetry.memory.swap_used_percent",
                 "telemetry.memory.used_percent",
                 "telemetry.cpu.used_percent",
-                "telemetry.cpu.frequency.current",
                 "telemetry.system.load_average.one_minute",
                 "telemetry.system.load_average.five_minute",
                 "telemetry.system.load_average.fifteen_minute",
                 "telemetry.system.temp",
-                "telemetry.system.boottime",
                 "dhcp_stats.leases.online",
                 "telemetry.wan_ip",
-                "telemetry.pfblockerng.dnsbl_blocks",
-                "telemetry.pfblockerng.ip_blocks",
-            ]:
-                enabled_default = True
+            ]
 
             entity = PfSenseStaticKeySensor(
                 config_entry,
@@ -139,14 +128,6 @@ async def async_setup_entry(
                 "inpktspass_packets_per_second",
                 "outpktspass",
                 "outpktspass_packets_per_second",
-                "inbytesblock",
-                "inbytesblock_kilobytes_per_second",
-                "outbytesblock",
-                "outbytesblock_kilobytes_per_second",
-                "inpktsblock",
-                "inpktsblock_packets_per_second",
-                "outpktsblock",
-                "outpktsblock_packets_per_second",
                 "inbytes",
                 "inbytes_kilobytes_per_second",
                 "outbytes",
@@ -351,38 +332,15 @@ class PfSenseStaticKeySensor(PfSenseSensor):
             return False
         if value == 0 and self.entity_description.key == "telemetry.system.temp":
             return False
-        if (
-            value == 0
-            and self.entity_description.key == "telemetry.cpu.frequency.current"
-        ):
-            if self._previous_value is None:
-                return False
         return super().available
 
     @property
     def native_value(self):
         value = self._get_pfsense_state_value(self.entity_description.key)
         if value is None:
-            if self.entity_description.key == "telemetry.system.boottime":
-                return value
             return STATE_UNKNOWN
 
         if value == 0 and self.entity_description.key == "telemetry.system.temp":
-            return STATE_UNKNOWN
-
-        if self.entity_description.key == "telemetry.system.boottime":
-            value = utc_from_timestamp(value)
-            if AwesomeVersion(__version__) < AwesomeVersion("2021.12.0b0"):
-                value = value.isoformat()
-
-        if self.entity_description.key == "telemetry.cpu.frequency.current":
-            if value == 0 and self._previous_value is not None:
-                value = self._previous_value
-
-        if (
-            value == 0
-            and self.entity_description.key == "telemetry.cpu.frequency.current"
-        ):
             return STATE_UNKNOWN
 
         self._previous_value = value
@@ -395,13 +353,9 @@ class PfSenseStaticKeySensor(PfSenseSensor):
         attrs = {}
 
         if self.entity_description.key == "telemetry.wan_ip":
-            attrs["dns_servers"] = dict_get(state, "config.system.dnsserver", [])
+            attrs["dns_servers"] = dict_get(state, "dns_servers", [])
             attrs["domain"] = dict_get(state, "system_info.domain")
             attrs["hostname"] = dict_get(state, "system_info.hostname")
-
-        elif "pfblockerng" in self.entity_description.key:
-            attrs["last_synchronized"] = utc_from_timestamp(time.time()).isoformat()
-            attrs["status"] = "Active"
 
         return attrs
 

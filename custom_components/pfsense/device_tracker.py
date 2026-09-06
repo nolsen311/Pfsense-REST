@@ -307,13 +307,9 @@ class PfSenseScannerEntity(PfSenseEntity, ScannerEntity):
                     return True
 
             return False
-        # TODO: check "expires" here to add more honed in logic?
-        # TODO: clear cache under certain scenarios?
-        ip_address = entry.get("ip_address")
-        if ip_address is not None and len(ip_address) > 0:
-            client = self._get_pfsense_client()
-            self.hass.add_job(client.delete_arp_entry, ip_address)
-
+        # The XML-RPC client used to delete the ARP entry here to force
+        # re-resolution on the next poll. The REST /diagnostics/arp_table is
+        # already live, so that per-device DELETE round-trip is not needed.
         self._last_known_connected_time = int(update_time)
 
         return True

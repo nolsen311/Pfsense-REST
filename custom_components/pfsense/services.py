@@ -9,10 +9,7 @@ import voluptuous as vol
 
 from .const import (
     DOMAIN,
-    SERVICE_CLOSE_NOTICE,
     SERVICE_EXEC_COMMAND,
-    SERVICE_EXEC_PHP,
-    SERVICE_FILE_NOTICE,
     SERVICE_KILL_STATES,
     SERVICE_RESET_STATE_TABLE,
     SERVICE_RESTART_SERVICE,
@@ -88,35 +85,6 @@ class ServiceRegistrar:
                     vol.Required("address"): vol.Any(cv.string),
                     vol.Required("action"): vol.In(["add", "remove"]),
                     vol.Optional("kill_states", default=True): cv.boolean,
-                }
-            ),
-            service_func=_async_send_service,
-        )
-
-        self.hass.services.async_register(
-            domain=DOMAIN,
-            service=SERVICE_CLOSE_NOTICE,
-            schema=cv.make_entity_service_schema(
-                {
-                    vol.Optional("id", default="all"): vol.Any(
-                        cv.positive_int, cv.string
-                    ),
-                }
-            ),
-            service_func=_async_send_service,
-        )
-
-        self.hass.services.async_register(
-            domain=DOMAIN,
-            service=SERVICE_FILE_NOTICE,
-            schema=cv.make_entity_service_schema(
-                {
-                    vol.Required("id"): vol.Any(cv.string),
-                    vol.Required("notice"): vol.Any(cv.string),
-                    vol.Optional("category", default="HASS"): vol.Any(cv.string),
-                    vol.Optional("url", default=""): vol.Any(cv.string),
-                    vol.Optional("priority", default=1): cv.positive_int,
-                    vol.Optional("local_only", default=False): cv.boolean,
                 }
             ),
             service_func=_async_send_service,
@@ -225,17 +193,6 @@ class ServiceRegistrar:
                 {
                     vol.Required("command"): vol.Any(cv.string),
                     vol.Optional("background"): cv.boolean,
-                }
-            ),
-            service_func=_async_send_service,
-        )
-
-        self.hass.services.async_register(
-            domain=DOMAIN,
-            service=SERVICE_EXEC_PHP,
-            schema=cv.make_entity_service_schema(
-                {
-                    vol.Required("script"): vol.Any(cv.string),
                 }
             ),
             service_func=_async_send_service,

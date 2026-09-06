@@ -3,7 +3,7 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from homeassistant.const import CONF_URL, CONF_VERIFY_SSL, STATE_OFF, STATE_ON
+from homeassistant.const import CONF_URL, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -87,13 +87,11 @@ async def test_carp_sensor_on(hass: HomeAssistant, mock_pfsense_client):
 
     coordinator = hass.data[DOMAIN]["carp_on"][COORDINATOR]
     assert coordinator.data["carp_status"] is True
-    # Notices have no REST endpoint; the key is present but always empty/false.
-    assert coordinator.data["notices"]["pending_notices_present"] is False
-
-    notices_sensor = hass.states.get(
-        "binary_sensor.router_local_pending_notices_present"
+    # Notices have no REST endpoint; that binary sensor no longer exists.
+    assert (
+        hass.states.get("binary_sensor.router_local_pending_notices_present") is None
     )
-    assert notices_sensor.state == STATE_OFF
+    assert hass.states.get("binary_sensor.router_local_carp_status") is not None
 
 
 @pytest.mark.asyncio

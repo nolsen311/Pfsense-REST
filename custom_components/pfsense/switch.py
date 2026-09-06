@@ -14,7 +14,7 @@ from homeassistant.helpers import entity_platform
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import slugify
 
-from . import CoordinatorEntityManager, PfSenseEntity, dict_get
+from . import CoordinatorEntityManager, PfSenseEntity
 from .const import COORDINATOR, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -35,127 +35,75 @@ async def async_setup_entry(
 
         entities = []
 
-        # filter rules
-        if "filter" in state["config"].keys():
-            rules = dict_get(state, "config.filter.rule")
-            if isinstance(rules, list):
-                for rule in rules:
-                    if not isinstance(rule, dict):
-                        continue
-                    icon = "mdi:security-network"
-                    # likely only want very specific rules to manipulate from actions
-                    enabled_default = False
-                    # entity_category = ENTITY_CATEGORY_CONFIG
-                    device_class = SwitchDeviceClass.SWITCH
+        # filter rules -- keyed by the pfSense internal `tracker` (stable across
+        # REST/XML-RPC), so entity unique_ids survive the migration.
+        for rule in state.get("firewall_rules") or []:
+            if not isinstance(rule, dict):
+                continue
+            tracker = rule.get("tracker")
+            if tracker is None:
+                continue
+            # skip NAT-associated rules and the un-disableable anti-lockout rule
+            if rule.get("associated_rule_id"):
+                continue
+            if rule.get("descr") == "Anti-Lockout Rule":
+                continue
 
-                    if "tracker" not in rule.keys():
-                        continue
-
-                    # do NOT add rules that are NAT rules
-                    if "associated-rule-id" in rule.keys():
-                        continue
-
-                    # not possible to disable these rules
-                    if rule["descr"] == "Anti-Lockout Rule":
-                        continue
-
-                    tracker = rule["tracker"]
-                    if tracker is None:
-                        continue
-
-                    # we use tracker as the unique id
-                    if len(tracker) < 1:
-                        continue
-
-                    entity = PfSenseFilterSwitch(
-                        config_entry,
-                        coordinator,
-                        SwitchEntityDescription(
-                            key="filter.{}".format(tracker),
-                            name="Filter Rule {} ({})".format(tracker, rule["descr"]),
-                            icon=icon,
-                            # entity_category=entity_category,
-                            device_class=device_class,
-                            entity_registry_enabled_default=enabled_default,
+            tracker = str(tracker)
+            entities.append(
+                PfSenseFilterSwitch(
+                    config_entry,
+                    coordinator,
+                    SwitchEntityDescription(
+                        key="filter.{}".format(tracker),
+                        name="Filter Rule {} ({})".format(
+                            tracker, rule.get("descr", "")
                         ),
-                    )
-                    entities.append(entity)
+                        icon="mdi:security-network",
+                        device_class=SwitchDeviceClass.SWITCH,
+                        entity_registry_enabled_default=False,
+                    ),
+                )
+            )
 
-        # nat port forward rules
-        if "nat" in state["config"].keys():
-            rules = dict_get(state, "config.nat.rule")
-            if isinstance(rules, list):
-                for rule in rules:
-                    if not isinstance(rule, dict):
-                        continue
-                    icon = "mdi:network"
-                    # likely only want very specific rules to manipulate from actions
-                    enabled_default = False
-                    # entity_category = ENTITY_CATEGORY_CONFIG
-                    device_class = SwitchDeviceClass.SWITCH
-                    tracker = dict_get(rule, "created.time")
-                    if tracker is None:
-                        continue
+        # nat rules -- keyed by `created_time` (was `created.time` under XML-RPC).
+        nat_groups = (
+            ("nat_port_forward", state.get("nat_port_forward_rules") or []),
+            ("nat_outbound", state.get("nat_outbound_rules") or []),
+        )
+        for rule_type, rules in nat_groups:
+            for rule in rules:
+                if not isinstance(rule, dict):
+                    continue
+                tracker = rule.get("created_time")
+                if tracker is None:
+                    continue
+                if rule_type == "nat_outbound" and "Auto created rule" in (
+                    rule.get("descr") or ""
+                ):
+                    continue
 
-                    # we use tracker as the unique id
-                    if len(tracker) < 1:
-                        continue
-
-                    entity = PfSenseNatSwitch(
+                tracker = str(tracker)
+                label = (
+                    "NAT Port Forward Rule"
+                    if rule_type == "nat_port_forward"
+                    else "NAT Outbound Rule"
+                )
+                entities.append(
+                    PfSenseNatSwitch(
                         config_entry,
                         coordinator,
                         SwitchEntityDescription(
-                            key="nat_port_forward.{}".format(tracker),
-                            name="NAT Port Forward Rule {} ({})".format(
-                                tracker, rule["descr"]
+                            key="{}.{}".format(rule_type, tracker),
+                            name="{} {} ({})".format(
+                                label, tracker, rule.get("descr", "")
                             ),
-                            icon=icon,
-                            # entity_category=entity_category,
-                            device_class=device_class,
-                            entity_registry_enabled_default=enabled_default,
+                            icon="mdi:network",
+                            device_class=SwitchDeviceClass.SWITCH,
+                            entity_registry_enabled_default=False,
                         ),
                     )
-                    entities.append(entity)
-
-        # nat outbound rules
-        if "nat" in state["config"].keys():
-            # to actually be applicable mode must by "hybrid" or "advanced"
-            rules = dict_get(state, "config.nat.outbound.rule")
-            if isinstance(rules, list):
-                for rule in rules:
-                    if not isinstance(rule, dict):
-                        continue
-                    icon = "mdi:network"
-                    # likely only want very specific rules to manipulate from actions
-                    enabled_default = False
-                    # entity_category = ENTITY_CATEGORY_CONFIG
-                    device_class = SwitchDeviceClass.SWITCH
-                    tracker = dict_get(rule, "created.time")
-                    if tracker is None:
-                        continue
-
-                    if "Auto created rule" in rule["descr"]:
-                        continue
-
-                    # we use tracker as the unique id
-                    if len(tracker) < 1:
-                        continue
-
-                    entity = PfSenseNatSwitch(
-                        config_entry,
-                        coordinator,
-                        SwitchEntityDescription(
-                            key="nat_outbound.{}".format(tracker),
-                            name="NAT Outbound Rule {} ({})".format(
-                                tracker, rule["descr"]
-                            ),
-                            icon=icon,
-                            # entity_category=entity_category,
-                            device_class=device_class,
-                            entity_registry_enabled_default=enabled_default,
-                        ),
-                    )
-                    entities.append(entity)
+                )
 
         # services
         for service in state["services"]:
@@ -234,15 +182,11 @@ class PfSenseFilterSwitch(PfSenseSwitch):
 
     def _pfsense_get_rule(self):
         state = self.coordinator.data
-        found = None
         tracker = self._pfsense_get_tracker()
-        for rule in state["config"]["filter"]["rule"]:
-            if "tracker" not in rule.keys():
-                continue
-            if rule["tracker"] == tracker:
-                found = rule
-                break
-        return found
+        for rule in state.get("firewall_rules") or []:
+            if str(rule.get("tracker")) == tracker:
+                return rule
+        return None
 
     @property
     def available(self) -> bool:
@@ -257,10 +201,7 @@ class PfSenseFilterSwitch(PfSenseSwitch):
         rule = self._pfsense_get_rule()
         if rule is None:
             return STATE_UNKNOWN
-        try:
-            return "disabled" not in rule.keys()
-        except KeyError:
-            return STATE_UNKNOWN
+        return not rule.get("disabled")
 
     async def async_turn_on(self, **kwargs):
         """Turn the entity on."""
@@ -292,20 +233,17 @@ class PfSenseNatSwitch(PfSenseSwitch):
 
     def _pfsense_get_rule(self):
         state = self.coordinator.data
-        found = None
         tracker = self._pfsense_get_tracker()
         rule_type = self._pfsense_get_rule_type()
-        rules = []
         if rule_type == "nat_port_forward":
-            rules = state["config"]["nat"]["rule"]
-        if rule_type == "nat_outbound":
-            rules = state["config"]["nat"]["outbound"]["rule"]
+            rules = state.get("nat_port_forward_rules") or []
+        else:
+            rules = state.get("nat_outbound_rules") or []
 
         for rule in rules:
-            if dict_get(rule, "created.time") == tracker:
-                found = rule
-                break
-        return found
+            if str(rule.get("created_time")) == tracker:
+                return rule
+        return None
 
     @property
     def available(self) -> bool:
@@ -320,10 +258,7 @@ class PfSenseNatSwitch(PfSenseSwitch):
         rule = self._pfsense_get_rule()
         if rule is None:
             return STATE_UNKNOWN
-        try:
-            return "disabled" not in rule.keys()
-        except KeyError:
-            return STATE_UNKNOWN
+        return not rule.get("disabled")
 
     async def async_turn_on(self, **kwargs):
         """Turn the entity on."""
@@ -373,7 +308,9 @@ class PfSenseServiceSwitch(PfSenseSwitch):
             if service_name.startswith("openvpn"):
                 # [ "openvpn", "<vpnid>""]
                 parts = service_name.split("-")
-                if service["name"] == parts[0] and service["vpnid"] == parts[1]:
+                if service["name"] == parts[0] and str(
+                    service.get("vpnid")
+                ) == parts[1]:
                     found = service
             elif service["name"] == service_name:
                 found = service

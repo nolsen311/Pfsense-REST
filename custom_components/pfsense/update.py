@@ -1,14 +1,12 @@
 """pfSense integration."""
 
 import logging
-import time
 
 from homeassistant.components.update import (
     UpdateDeviceClass,
     UpdateEntity,
     UpdateEntityDescription,
 )
-from homeassistant.components.update.const import UpdateEntityFeature
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_platform
@@ -76,13 +74,8 @@ class PfSenseUpdate(PfSenseEntity, UpdateEntity):
             f"{self.pfsense_device_unique_id}_{entity_description.key}"
         )
 
-        self._attr_supported_features |= (
-            UpdateEntityFeature.INSTALL
-            # | UpdateEntityFeature.BACKUP
-            # | UpdateEntityFeature.PROGRESS
-            # | UpdateEntityFeature.RELEASE_NOTES
-            # | UpdateEntityFeature.SPECIFIC_VERSION
-        )
+        # Read-only: REST API v2 exposes no base-system "update available" flag
+        # and no progress-tracked upgrade, so no INSTALL feature is advertised.
 
     @property
     def device_class(self):
@@ -152,14 +145,3 @@ class PfSenseFirmwareUpdatesAvailableUpdate(PfSenseUpdate):
     @property
     def release_url(self):
         return "https://docs.netgate.com/pfsense/en/latest/releases/index.html"
-
-    def install(self, version=None, backup=False):
-        """Install an update."""
-        client = self._get_pfsense_client()
-        pid = client.upgrade_firmware()
-
-        sleep_time = 10
-        running = True
-        while running:
-            time.sleep(sleep_time)
-            running = client.pid_is_running(pid)

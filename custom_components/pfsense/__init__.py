@@ -1,4 +1,4 @@
-"""Support for pfSense (GOUDEN BUILD - Cache & Veilig)."""
+"""Support for pfSense REST API"""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from homeassistant.const import (
     CONF_VERIFY_SSL,
 )
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -90,42 +90,6 @@ def dict_get(data: dict, path: str, default=None):
             result = default
             break
     return result
-
-
-def _legacy_rule(rule: dict) -> dict:
-    """Reshape a REST v2 firewall/NAT rule into the legacy ``$config`` form that
-    ``switch.py`` still consumes: string ``tracker`` / ``created.time``,
-    hyphenated ``associated-rule-id``, and ``disabled`` as a presence key."""
-    out = dict(rule)
-    if out.get("tracker") is not None:
-        out["tracker"] = str(out["tracker"])
-    if out.get("created_time") is not None:
-        out["created"] = {"time": str(out["created_time"])}
-    if out.get("associated_rule_id"):
-        out["associated-rule-id"] = out["associated_rule_id"]
-    if out.get("disabled"):
-        out["disabled"] = ""
-    else:
-        out.pop("disabled", None)
-    return out
-
-
-def _legacy_config(
-    filter_rules: list, nat_port_forwards: list, nat_outbound: list, dns_servers: list
-) -> dict:
-    """Synthesize the subset of the old ``get_config()`` blob that entities read.
-
-    Only ``config.filter.rule``, ``config.nat.rule``,
-    ``config.nat.outbound.rule`` and ``config.system.dnsserver`` are consumed.
-    """
-    return {
-        "filter": {"rule": [_legacy_rule(r) for r in filter_rules]},
-        "nat": {
-            "rule": [_legacy_rule(r) for r in nat_port_forwards],
-            "outbound": {"rule": [_legacy_rule(r) for r in nat_outbound]},
-        },
-        "system": {"dnsserver": dns_servers},
-    }
 
 
 _INTERFACE_RATE_PROPS = (
@@ -402,24 +366,19 @@ class PfSenseData:
                 self._client.get_nat_outbound_rules(),
             )
 
-            telemetry_data.setdefault("pfblockerng", {})
             new_state["system_info"] = system_info
             new_state["host_firmware_version"] = host_firmware_version
             new_state["firmware_update_info"] = None
             new_state["telemetry"] = telemetry_data
-            new_state["config"] = _legacy_config(
-                filter_rules, nat_port_forwards, nat_outbound, dns_servers
-            )
+            new_state["firewall_rules"] = filter_rules
+            new_state["nat_port_forward_rules"] = nat_port_forwards
+            new_state["nat_outbound_rules"] = nat_outbound
+            new_state["dns_servers"] = dns_servers
             new_state["services"] = services
             new_state["carp_interfaces"] = carp_interfaces
             new_state["carp_status"] = carp_status
             new_state["dhcp_leases"] = dhcp_leases
             new_state["dhcp_stats"] = {}
-            # Notices have no REST v2 endpoint; keep the key so entities don't KeyError.
-            new_state["notices"] = {
-                "pending_notices_present": False,
-                "pending_notices": [],
-            }
 
             lease_stats = {"total": 0, "online": 0, "idle_offline": 0}
             for lease in dhcp_leases:
@@ -525,16 +484,6 @@ class PfSenseEntity(CoordinatorEntity, RestoreEntity):
     def _get_pfsense_client(self) -> pfSenseClient:
         return self.hass.data[DOMAIN][self.config_entry.entry_id][PFSENSE_CLIENT]
 
-    async def service_close_notice(self, id: int | str | None = None):
-        raise HomeAssistantError(
-            "The pfSense REST API has no notices endpoint; this service was removed."
-        )
-
-    async def service_file_notice(self, **kwargs):
-        raise HomeAssistantError(
-            "The pfSense REST API has no notices endpoint; this service was removed."
-        )
-
     async def service_start_service(
         self, service_name: str, service: dict | str | None = None
     ):
@@ -574,11 +523,6 @@ class PfSenseEntity(CoordinatorEntity, RestoreEntity):
 
     async def service_set_default_gateway(self, gateway: str, ip_version: str):
         await self._get_pfsense_client().set_default_gateway(gateway, ip_version)
-
-    async def service_exec_php(self, script: str):
-        raise HomeAssistantError(
-            "exec_php is not available over the pfSense REST API and was removed."
-        )
 
     async def service_exec_command(self, command: str, background: bool = False):
         await self._get_pfsense_client().exec_command(command, background)

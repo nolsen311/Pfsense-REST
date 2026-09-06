@@ -3,7 +3,6 @@
 import logging
 
 from homeassistant.components.binary_sensor import (
-    BinarySensorDeviceClass,
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
@@ -14,7 +13,7 @@ from homeassistant.helpers import entity_platform
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import slugify
 
-from . import CoordinatorEntityManager, PfSenseEntity, dict_get
+from . import CoordinatorEntityManager, PfSenseEntity
 from .const import COORDINATOR, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -31,37 +30,18 @@ async def async_setup_entry(
     def process_entities_callback(hass, config_entry):
         data = hass.data[DOMAIN][config_entry.entry_id]
         coordinator = data[COORDINATOR]
-        entities = []
-        entity = PfSenseCarpStatusBinarySensor(
-            config_entry,
-            coordinator,
-            BinarySensorEntityDescription(
-                key="carp.status",
-                name="CARP Status",
-                # native_unit_of_measurement=native_unit_of_measurement,
-                icon="mdi:gauge",
-                # state_class=state_class,
-                # entity_category=entity_category,
-            ),
-            False,
-        )
-        entities.append(entity)
-
-        entity = PfSensePendingNoticesPresentBinarySensor(
-            config_entry,
-            coordinator,
-            BinarySensorEntityDescription(
-                key="notices.pending_notices_present",
-                name="Pending Notices Present",
-                # native_unit_of_measurement=native_unit_of_measurement,
-                icon="mdi:alert",
-                # state_class=state_class,
-                # entity_category=entity_category,
-            ),
-            True,
-        )
-        entities.append(entity)
-
+        entities = [
+            PfSenseCarpStatusBinarySensor(
+                config_entry,
+                coordinator,
+                BinarySensorEntityDescription(
+                    key="carp.status",
+                    name="CARP Status",
+                    icon="mdi:gauge",
+                ),
+                False,
+            )
+        ]
         return entities
 
     cem = CoordinatorEntityManager(
@@ -113,27 +93,3 @@ class PfSenseCarpStatusBinarySensor(PfSenseBinarySensor):
             return state["carp_status"]
         except KeyError:
             return STATE_UNKNOWN
-
-
-class PfSensePendingNoticesPresentBinarySensor(PfSenseBinarySensor):
-    @property
-    def is_on(self):
-        state = self.coordinator.data
-        try:
-            return state["notices"]["pending_notices_present"]
-        except KeyError:
-            return STATE_UNKNOWN
-
-    @property
-    def device_class(self):
-        return BinarySensorDeviceClass.PROBLEM
-
-    @property
-    def extra_state_attributes(self):
-        state = self.coordinator.data
-        attrs = {}
-
-        notices = dict_get(state, "notices.pending_notices")
-        attrs["pending_notices"] = notices
-
-        return attrs

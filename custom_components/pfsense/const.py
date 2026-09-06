@@ -11,8 +11,6 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import (
     PERCENTAGE,
-    UnitOfFrequency,
-    UnitOfInformation,
     UnitOfTemperature,
     UnitOfTime,
 )
@@ -27,7 +25,14 @@ CONF_API_KEY = "api_key"
 
 UNDO_UPDATE_LISTENER = "undo_update_listener"
 
-PLATFORMS = ["sensor", "switch", "device_tracker", "binary_sensor", "update"]
+PLATFORMS = [
+    "sensor",
+    "switch",
+    "button",
+    "device_tracker",
+    "binary_sensor",
+    "update",
+]
 LOADED_PLATFORMS = "loaded_platforms"
 
 PFSENSE_CLIENT = "pfsense_client"
@@ -68,91 +73,12 @@ SENSOR_TYPES: Final[dict[str, SensorEntityDescription]] = {
         name="WAN IP Address",
         icon="mdi:public",
     ),
-    "telemetry.pfblockerng.dnsbl_blocks": SensorEntityDescription(
-        key="telemetry.pfblockerng.dnsbl_blocks",
-        name="pfBlockerNG DNSBL Blocks",
-        native_unit_of_measurement=COUNT,
-        icon="mdi:shield-dns",
-        state_class=SensorStateClass.MEASUREMENT,
-    ),
-    "telemetry.pfblockerng.ip_blocks": SensorEntityDescription(
-        key="telemetry.pfblockerng.ip_blocks",
-        name="pfBlockerNG IP Blocks",
-        native_unit_of_measurement=COUNT,
-        icon="mdi:shield-lock",
-        state_class=SensorStateClass.MEASUREMENT,
-    ),
-    "telemetry.pfstate.used": SensorEntityDescription(
-        key="telemetry.pfstate.used",
-        name="pf State Table Used",
-        native_unit_of_measurement=COUNT,
-        icon="mdi:table-network",
-        state_class=SensorStateClass.MEASUREMENT,
-    ),
-    "telemetry.pfstate.total": SensorEntityDescription(
-        key="telemetry.pfstate.total",
-        name="pf State Table Total",
-        native_unit_of_measurement=COUNT,
-        icon="mdi:table-network",
-    ),
-    "telemetry.pfstate.used_percent": SensorEntityDescription(
-        key="telemetry.pfstate.used_percent",
-        name="pf State Table Used Percentage",
-        native_unit_of_measurement=PERCENTAGE,
-        icon="mdi:table-network",
-        state_class=SensorStateClass.MEASUREMENT,
-    ),
-    "telemetry.mbuf.used": SensorEntityDescription(
-        key="telemetry.mbuf.used",
-        name="Memory Buffers Used",
-        native_unit_of_measurement=UnitOfInformation.BYTES,
-        icon=ICON_MEMORY,
-        state_class=SensorStateClass.MEASUREMENT,
-    ),
-    "telemetry.mbuf.total": SensorEntityDescription(
-        key="telemetry.mbuf.total",
-        name="Memory Buffers Total",
-        native_unit_of_measurement=UnitOfInformation.BYTES,
-        icon=ICON_MEMORY,
-    ),
     "telemetry.mbuf.used_percent": SensorEntityDescription(
         key="telemetry.mbuf.used_percent",
         name="Memory Buffers Used Percentage",
         native_unit_of_measurement=PERCENTAGE,
         icon=ICON_MEMORY,
         state_class=SensorStateClass.MEASUREMENT,
-    ),
-    "telemetry.memory.usermem": SensorEntityDescription(
-        key="telemetry.memory.usermem",
-        name="Memory Usermem",
-        native_unit_of_measurement=UnitOfInformation.BYTES,
-        icon=ICON_MEMORY,
-        state_class=SensorStateClass.MEASUREMENT,
-    ),
-    "telemetry.memory.swap_reserved": SensorEntityDescription(
-        key="telemetry.memory.swap_reserved",
-        name="Memory Swap Reserved",
-        native_unit_of_measurement=UnitOfInformation.BYTES,
-        icon=ICON_MEMORY,
-        state_class=SensorStateClass.MEASUREMENT,
-    ),
-    "telemetry.memory.physmem": SensorEntityDescription(
-        key="telemetry.memory.physmem",
-        name="Memory Physmem",
-        native_unit_of_measurement=UnitOfInformation.BYTES,
-        icon=ICON_MEMORY,
-    ),
-    "telemetry.memory.realmem": SensorEntityDescription(
-        key="telemetry.memory.realmem",
-        name="Memory Realmem",
-        native_unit_of_measurement=UnitOfInformation.BYTES,
-        icon=ICON_MEMORY,
-    ),
-    "telemetry.memory.swap_total": SensorEntityDescription(
-        key="telemetry.memory.swap_total",
-        name="Memory Swap Total",
-        native_unit_of_measurement=UnitOfInformation.BYTES,
-        icon=ICON_MEMORY,
     ),
     "telemetry.memory.swap_used_percent": SensorEntityDescription(
         key="telemetry.memory.swap_used_percent",
@@ -174,19 +100,6 @@ SENSOR_TYPES: Final[dict[str, SensorEntityDescription]] = {
         native_unit_of_measurement=PERCENTAGE,
         icon="mdi:speedometer-medium",
         state_class=SensorStateClass.MEASUREMENT,
-    ),
-    "telemetry.cpu.frequency.current": SensorEntityDescription(
-        key="telemetry.cpu.frequency.current",
-        name="CPU Frequency Current",
-        native_unit_of_measurement=UnitOfFrequency.HERTZ,
-        icon="mdi:speedometer-medium",
-        state_class=SensorStateClass.MEASUREMENT,
-    ),
-    "telemetry.cpu.frequency.max": SensorEntityDescription(
-        key="telemetry.cpu.frequency.max",
-        name="CPU Frequency Max",
-        native_unit_of_measurement=UnitOfFrequency.HERTZ,
-        icon="mdi:speedometer",
     ),
     "telemetry.cpu.count": SensorEntityDescription(
         key="telemetry.cpu.count",
@@ -220,12 +133,6 @@ SENSOR_TYPES: Final[dict[str, SensorEntityDescription]] = {
         icon="mdi:thermometer",
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    "telemetry.system.boottime": SensorEntityDescription(
-        key="telemetry.system.boottime",
-        name="System Boottime",
-        device_class=SensorDeviceClass.TIMESTAMP,
-        icon="mdi:clock-outline",
-    ),
     "dhcp_stats.leases.total": SensorEntityDescription(
         key="dhcp_stats.leases.total",
         name="DHCP Leases Total",
@@ -249,8 +156,6 @@ SENSOR_TYPES: Final[dict[str, SensorEntityDescription]] = {
     ),
 }
 
-SERVICE_CLOSE_NOTICE = "close_notice"
-SERVICE_FILE_NOTICE = "file_notice"
 SERVICE_START_SERVICE = "start_service"
 SERVICE_STOP_SERVICE = "stop_service"
 SERVICE_RESTART_SERVICE = "restart_service"
@@ -260,5 +165,4 @@ SERVICE_SYSTEM_HALT = "system_halt"
 SERVICE_SYSTEM_REBOOT = "system_reboot"
 SERVICE_SEND_WOL = "send_wol"
 SERVICE_SET_DEFAULT_GATEWAY = "set_default_gateway"
-SERVICE_EXEC_PHP = "exec_php"
 SERVICE_EXEC_COMMAND = "exec_command"
