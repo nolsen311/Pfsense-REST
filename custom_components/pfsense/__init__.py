@@ -62,7 +62,7 @@ async def async_save_cache(hass: HomeAssistant, entry_id: str, data: dict):
     store = Store(hass, STORAGE_VERSION, f"{DOMAIN}_{entry_id}_cache")
     try:
         await store.async_save(data)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - a cache write must never break the poll
         _LOGGER.error(f"Failed to save pfSense cache: {e}")
 
 
@@ -71,7 +71,7 @@ async def async_load_cache(hass: HomeAssistant, entry_id: str):
     store = Store(hass, STORAGE_VERSION, f"{DOMAIN}_{entry_id}_cache")
     try:
         return await store.async_load()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - any cache error -> live poll
         _LOGGER.error(f"Failed to load pfSense cache: {e}")
         return None
 
@@ -86,7 +86,7 @@ def dict_get(data: dict, path: str, default=None):
         try:
             key = int(key) if key.isnumeric() else key
             result = result[key]
-        except Exception:
+        except (KeyError, IndexError, TypeError):
             result = default
             break
     return result
@@ -124,11 +124,11 @@ def _compute_interface_rates(new_state, elapsed_time, scan_interval):
                 label, value = "kilobytes_per_second", rate / 1000
             new_property = f"{prop}_{label}"
             if elapsed_time >= scan_interval:
-                interface[new_property] = int(round(value))
+                interface[new_property] = round(value)
             else:
                 previous_value = previous_interface.get(new_property)
-                interface[new_property] = int(
-                    round(previous_value if previous_value is not None else value)
+                interface[new_property] = round(
+                    previous_value if previous_value is not None else value
                 )
 
 
@@ -144,7 +144,7 @@ def _compute_openvpn_rates(new_state, elapsed_time):
         for prop in ("total_bytes_recv", "total_bytes_sent"):
             change = abs(server.get(prop, 0) - previous_server.get(prop, 0))
             rate = change / elapsed_time if elapsed_time > 0 else 0
-            server[f"{prop}_kilobytes_per_second"] = int(round(rate / 1000))
+            server[f"{prop}_kilobytes_per_second"] = round(rate / 1000)
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry):
@@ -186,7 +186,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
             return new_state
         except (PfSenseAuthError, PfSensePrivilegeError) as err:
             raise ConfigEntryAuthFailed(str(err)) from err
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001 - any poll error -> use cache
             _LOGGER.warning(
                 "pfSense poll failed (%s); trying the local cache", err
             )
@@ -226,7 +226,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
                 return new_dt_state
             except (PfSenseAuthError, PfSensePrivilegeError) as err:
                 raise ConfigEntryAuthFailed(str(err)) from err
-            except Exception as err:
+            except Exception as err:  # noqa: BLE001 - keep last known state
                 _LOGGER.warning("pfSense device tracker update failed: %s", err)
                 if device_tracker_data._state:
                     return device_tracker_data._state
@@ -509,7 +509,7 @@ class PfSenseEntity(CoordinatorEntity, RestoreEntity):
     async def service_reset_state_table(self):
         await self._get_pfsense_client().reset_state_table()
 
-    async def service_kill_states(self, source: str, destination: str = None):
+    async def service_kill_states(self, source: str, destination: str | None = None):
         await self._get_pfsense_client().kill_states(source, destination)
 
     async def service_system_halt(self):

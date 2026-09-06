@@ -16,7 +16,7 @@ import asyncio
 import ipaddress
 import logging
 import re
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import urlparse
 
 import aiohttp
@@ -350,7 +350,7 @@ class Client:
     # fields make an otherwise unrelated toggle fail with
     # ``FIELD_EMPTY_NOT_ALLOWED``. Re-send them with the value pfSense would
     # have defaulted to, which is a no-op for the rule's behaviour.
-    _RULE_REQUIRED_DEFAULTS = {
+    _RULE_REQUIRED_DEFAULTS: ClassVar[dict[str, dict[str, str]]] = {
         "/firewall/rule": {"statetype": "keep state"},
     }
 

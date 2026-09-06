@@ -190,7 +190,7 @@ class PfSenseSwitch(PfSenseEntity, SwitchEntity):
             return
         try:
             await self._get_pfsense_client().kill_states_for_rule(rule)
-        except Exception:  # best effort - never fail the toggle over this
+        except Exception:  # noqa: BLE001 - best effort; never fail the toggle
             _LOGGER.warning("failed to kill states for toggled rule", exc_info=True)
 
 
@@ -343,7 +343,7 @@ class PfSenseServiceSwitch(PfSenseSwitch):
     def available(self) -> bool:
         service = self._pfsense_get_service()
         property = self._pfsense_get_property_name()
-        if service is None or property not in service.keys():
+        if service is None or property not in service:
             return False
 
         return super().available

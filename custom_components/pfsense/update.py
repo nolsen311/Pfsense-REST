@@ -135,7 +135,7 @@ class PfSenseFirmwareUpdatesAvailableUpdate(PfSenseUpdate):
         if not info:
             return attrs
 
-        for key in info.keys():
+        for key in info:
             attrs[f"pfsense_base_{key}"] = dict_get(
                 state, f"firmware_update_info.base.{key}"
             )

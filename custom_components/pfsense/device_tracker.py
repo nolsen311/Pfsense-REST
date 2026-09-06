@@ -55,11 +55,11 @@ async def async_setup_entry(
     mac_vendor_lookup = AsyncMacLookup()
     try:
         await mac_vendor_lookup.update_vendors()
-    except Exception:
+    except Exception:  # noqa: BLE001 - OUI lookup is optional
         try:
             await mac_vendor_lookup.load_vendors()
-        except Exception:
-            pass
+        except Exception as err:  # noqa: BLE001 - continue without vendors
+            _LOGGER.debug("MAC vendor database unavailable: %s", err)
 
     dev_reg = async_get_dev_reg(hass)
 
@@ -102,8 +102,8 @@ async def async_setup_entry(
             mac_vendor = None
             try:
                 mac_vendor = lookup_mac(mac_vendor_lookup, mac_address)
-            except Exception:
-                pass
+            except Exception as err:  # noqa: BLE001 - unknown OUI, leave vendor unset
+                _LOGGER.debug("MAC vendor lookup failed for %s: %s", mac_address, err)
 
             entity = PfSenseScannerEntity(
                 hass,
@@ -280,7 +280,7 @@ class PfSenseScannerEntity(PfSenseEntity, ScannerEntity):
         """Return device icon."""
         try:
             return "mdi:lan-connect" if self.is_connected else "mdi:lan-disconnect"
-        except Exception:
+        except (KeyError, TypeError):
             return "mdi:lan-disconnect"
 
     @property

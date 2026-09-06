@@ -113,7 +113,7 @@ async def async_setup_entry(
             )
             entities.append(entity)
 
-        for interface_name in dict_get(state, "telemetry.interfaces", {}).keys():
+        for interface_name in dict_get(state, "telemetry.interfaces", {}):
             interface = state["telemetry"]["interfaces"][interface_name]
             for property in [
                 "status",
@@ -199,7 +199,7 @@ async def async_setup_entry(
                 )
                 entities.append(entity)
 
-        for gateway_name in dict_get(state, "telemetry.gateways", {}).keys():
+        for gateway_name in dict_get(state, "telemetry.gateways", {}):
             gateway = state["telemetry"]["gateways"][gateway_name]
             for property in ["status", "delay", "stddev", "loss"]:
                 state_class = None
@@ -230,7 +230,7 @@ async def async_setup_entry(
                 )
                 entities.append(entity)
 
-        for vpnid in dict_get(state, "telemetry.openvpn.servers", {}).keys():
+        for vpnid in dict_get(state, "telemetry.openvpn.servers", {}):
             servers = dict_get(state, "telemetry.openvpn.servers", {})
             server = servers[vpnid]
             for property in [
@@ -254,9 +254,8 @@ async def async_setup_entry(
                 if "_kilobytes_per_second" in property:
                     native_unit_of_measurement = UnitOfDataRate.KILOBYTES_PER_SECOND
 
-                if native_unit_of_measurement is None:
-                    if "bytes" in property:
-                        native_unit_of_measurement = UnitOfInformation.BYTES
+                if native_unit_of_measurement is None and "bytes" in property:
+                    native_unit_of_measurement = UnitOfInformation.BYTES
 
                 if property in ["connected_client_count"]:
                     native_unit_of_measurement = "clients"
@@ -403,7 +402,7 @@ class PfSenseInterfaceSensor(PfSenseSensor):
         state = self.coordinator.data
         found = None
         interface_name = self._pfsense_get_interface_name()
-        for i_interface_name in state["telemetry"]["interfaces"].keys():
+        for i_interface_name in state["telemetry"]["interfaces"]:
             if i_interface_name == interface_name:
                 found = state["telemetry"]["interfaces"][i_interface_name]
                 break
@@ -413,7 +412,7 @@ class PfSenseInterfaceSensor(PfSenseSensor):
     def available(self) -> bool:
         interface = self._pfsense_get_interface()
         property = self._pfsense_get_interface_property_name()
-        if interface is None or property not in interface.keys():
+        if interface is None or property not in interface:
             return False
         return super().available
 
@@ -506,7 +505,7 @@ class PfSenseGatewaySensor(PfSenseSensor):
         state = self.coordinator.data
         found = None
         gateway_name = self._pfsense_get_gateway_name()
-        for i_gateway_name in state["telemetry"]["gateways"].keys():
+        for i_gateway_name in state["telemetry"]["gateways"]:
             if i_gateway_name == gateway_name:
                 found = state["telemetry"]["gateways"][i_gateway_name]
                 break
@@ -516,7 +515,7 @@ class PfSenseGatewaySensor(PfSenseSensor):
         state = self.coordinator.data
         found = None
         gateway_name = self._pfsense_get_gateway_name()
-        for i_gateway_name in state["telemetry"]["gateways_detail"].keys():
+        for i_gateway_name in state["telemetry"]["gateways_detail"]:
             if i_gateway_name == gateway_name:
                 found = state["telemetry"]["gateways_detail"][i_gateway_name]
                 break
@@ -526,7 +525,7 @@ class PfSenseGatewaySensor(PfSenseSensor):
     def available(self) -> bool:
         gateway = self._pfsense_get_gateway()
         property = self._pfsense_get_gateway_property_name()
-        if gateway is None or property not in gateway.keys():
+        if gateway is None or property not in gateway:
             return False
 
         if property in ["stddev", "delay", "loss"]:
@@ -576,11 +575,10 @@ class PfSenseGatewaySensor(PfSenseSensor):
 
         try:
             value = gateway[property]
-            if property in ["stddev", "delay", "loss"]:
-                if isinstance(value, str):
-                    value = re.sub(r"[^0-9\.]*", "", value)
-                    if len(value) > 0:
-                        value = float(value)
+            if property in ["stddev", "delay", "loss"] and isinstance(value, str):
+                value = re.sub(r"[^0-9\.]*", "", value)
+                if len(value) > 0:
+                    value = float(value)
 
             if isinstance(value, str) and len(value) < 1:
                 return STATE_UNKNOWN
@@ -601,7 +599,7 @@ class PfSenseOpenVPNServerSensor(PfSenseSensor):
         state = self.coordinator.data
         found = None
         vpnid = self._pfsense_get_server_vpnid()
-        for server_vpnid in dict_get(state, "telemetry.openvpn.servers", {}).keys():
+        for server_vpnid in dict_get(state, "telemetry.openvpn.servers", {}):
             if vpnid == server_vpnid:
                 found = state["telemetry"]["openvpn"]["servers"][vpnid]
                 break
@@ -611,7 +609,7 @@ class PfSenseOpenVPNServerSensor(PfSenseSensor):
     def available(self) -> bool:
         server = self._pfsense_get_server()
         property = self._pfsense_get_server_property_name()
-        if server is None or property not in server.keys():
+        if server is None or property not in server:
             return False
         return super().available
 
