@@ -20,6 +20,11 @@ from homeassistant.const import (
 DEFAULT_USERNAME = "admin"
 DOMAIN = "pfsense"
 
+# REST API v2 auth. The pre-2.x integration used username + password over
+# XML-RPC; v2 authenticates with an API key generated on the box at
+# System > REST API > Keys and sent as the ``x-api-key`` header.
+CONF_API_KEY = "api_key"
+
 UNDO_UPDATE_LISTENER = "undo_update_listener"
 
 PLATFORMS = ["sensor", "switch", "device_tracker", "binary_sensor", "update"]

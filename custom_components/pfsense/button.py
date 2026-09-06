@@ -84,14 +84,14 @@ class PfSenseButton(PfSenseEntity, ButtonEntity):
 
 class PfSenseRebootButton(PfSenseButton):
     async def async_press(self) -> None:
-        await self.hass.async_add_executor_job(self.service_system_reboot)
+        await self.service_system_reboot()
 
 
 class PfSenseHaltButton(PfSenseButton):
     async def async_press(self) -> None:
-        await self.hass.async_add_executor_job(self.service_system_halt)
+        await self.service_system_halt()
 
 
 class PfSenseResetStatesButton(PfSenseButton):
     async def async_press(self) -> None:
-        await self.hass.async_add_executor_job(self.service_reset_state_table)
+        await self.service_reset_state_table()

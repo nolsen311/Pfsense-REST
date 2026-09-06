@@ -1,7 +1,10 @@
+"""Service switch tests."""
+
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
+
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock, PropertyMock
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 from homeassistant.components.switch import SwitchEntityDescription
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.pfsense.switch import PfSenseServiceSwitch
 
@@ -10,7 +13,9 @@ from custom_components.pfsense.switch import PfSenseServiceSwitch
 def mock_coordinator():
     coord = MagicMock()
     coord.data = {
-        "services": [{"name": "dhcpd", "status": True, "description": "DHCP Server"}]
+        "services": [
+            {"id": 6, "name": "unbound", "status": True, "description": "DNS Resolver"}
+        ]
     }
     coord.async_refresh = AsyncMock()
     return coord
@@ -27,26 +32,18 @@ def mock_coordinator():
     new_callable=PropertyMock,
     return_value="pfSense",
 )
-async def test_service_switch(mock_name, mock_uid, mock_coordinator):
-    config_entry = MockConfigEntry()
-    desc = SwitchEntityDescription(key="services.dhcpd.status", name="DHCPD")
+async def test_service_switch_turn_off(mock_name, mock_uid, mock_coordinator):
+    desc = SwitchEntityDescription(key="service.unbound.status", name="unbound")
+    switch = PfSenseServiceSwitch(MockConfigEntry(), mock_coordinator, desc)
 
-    # Safely handle the constructor signature
-    try:
-        switch = PfSenseServiceSwitch(config_entry, mock_coordinator, desc, False)
-    except TypeError:
-        switch = PfSenseServiceSwitch(config_entry, mock_coordinator, desc)
-
-    mock_client = MagicMock()
-    switch._get_pfsense_client = MagicMock(return_value=mock_client)
-    switch.hass = MagicMock()
-    switch.hass.async_add_executor_job = AsyncMock()
+    client = AsyncMock()
+    switch._get_pfsense_client = MagicMock(return_value=client)
 
     assert switch.is_on is True
 
     await switch.async_turn_off()
-    switch.hass.async_add_executor_job.assert_called_with(
-        mock_client.stop_service,
-        "dhcpd",
-        {"name": "dhcpd", "status": True, "description": "DHCP Server"},
+    client.stop_service.assert_awaited_once_with(
+        "unbound",
+        {"id": 6, "name": "unbound", "status": True, "description": "DNS Resolver"},
     )
+    mock_coordinator.async_refresh.assert_awaited_once()

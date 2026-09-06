@@ -95,7 +95,7 @@ async def async_setup_entry(
                 mac_addresses = [
                     mac_address.lower()
                     for arp_entry in arp_entries
-                    if (mac_address := arp_entry.get("mac-address"))
+                    if (mac_address := arp_entry.get("mac_address"))
                 ]
 
         for mac_address in mac_addresses:
@@ -176,7 +176,7 @@ class PfSenseScannerEntity(PfSenseEntity, ScannerEntity):
         if arp_table is None:
             return None
         for entry in arp_table:
-            if entry.get("mac-address", "").lower() == self._mac_address:
+            if entry.get("mac_address", "").lower() == self._mac_address:
                 return entry
 
         return None
@@ -232,7 +232,7 @@ class PfSenseScannerEntity(PfSenseEntity, ScannerEntity):
         if entry is None:
             return None
 
-        ip_address = entry.get("ip-address")
+        ip_address = entry.get("ip_address")
         if ip_address is not None and len(ip_address) > 0:
             self._last_known_ip = ip_address
         return ip_address
@@ -309,7 +309,7 @@ class PfSenseScannerEntity(PfSenseEntity, ScannerEntity):
             return False
         # TODO: check "expires" here to add more honed in logic?
         # TODO: clear cache under certain scenarios?
-        ip_address = entry.get("ip-address")
+        ip_address = entry.get("ip_address")
         if ip_address is not None and len(ip_address) > 0:
             client = self._get_pfsense_client()
             self.hass.add_job(client.delete_arp_entry, ip_address)

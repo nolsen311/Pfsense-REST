@@ -1,74 +1,155 @@
-import xmlrpc.client
-from unittest.mock import patch, MagicMock
+"""Unit tests for the async pfSense REST API v2 client."""
+
+import aiohttp
+import pytest
+from aioresponses import aioresponses
 
 from custom_components.pfsense.pypfsense import (
     Client,
+    PfSenseAuthError,
+    PfSenseNotFoundError,
+    PfSensePrivilegeError,
+    PfSenseAPIError,
+    _build_telemetry,
     dict_get,
-    normalize_service_data,
 )
+
+BASE = "https://pf.example:8444"
+API = f"{BASE}/api/v2"
+
+
+def _envelope(data, code=200, status="ok", response_id="SUCCESS", message=""):
+    return {
+        "code": code,
+        "status": status,
+        "response_id": response_id,
+        "message": message,
+        "data": data,
+    }
+
+
+@pytest.fixture
+async def client():
+    async with aiohttp.ClientSession() as session:
+        yield Client(BASE, "test-key", session, {"verify_ssl": False})
 
 
 def test_dict_get():
-    # FIX: The pfSense dict_get casts numeric strings to literal integers!
-    data = {
-        "telemetry": {
-            "system": {"version": "2.6.0"},
-            "interfaces": {0: {"status": "up"}},
-            2: "numeric_key_test",
-        }
+    data = {"a": {"b": [{"c": 1}]}, "n": {2: "x"}}
+    assert dict_get(data, "a.b.0.c") == 1
+    assert dict_get(data, "n.2") == "x"
+    assert dict_get(data, "a.missing", "d") == "d"
+    assert dict_get(data, "a.b.9.c") is None
+
+
+def test_base_url_strips_path():
+    c = Client("https://pf.example:8444/ui/", "k", object())
+    assert c._base == "https://pf.example:8444/api/v2"
+
+
+async def test_request_unwraps_data(client):
+    with aioresponses() as m:
+        m.get(f"{API}/system/hostname", payload=_envelope({"hostname": "pf", "domain": "lan"}))
+        assert await client._get("/system/hostname") == {"hostname": "pf", "domain": "lan"}
+
+
+@pytest.mark.parametrize(
+    "code,exc",
+    [
+        (401, PfSenseAuthError),
+        (403, PfSensePrivilegeError),
+        (404, PfSenseNotFoundError),
+        (500, PfSenseAPIError),
+    ],
+)
+async def test_error_codes_map_to_exceptions(client, code, exc):
+    with aioresponses() as m:
+        m.get(
+            f"{API}/system/hostname",
+            status=code,
+            payload=_envelope([], code=code, status="err", response_id="X", message="nope"),
+        )
+        with pytest.raises(exc):
+            await client._get("/system/hostname")
+
+
+async def test_get_system_info_merges_endpoints(client):
+    with aioresponses() as m:
+        m.get(
+            f"{API}/status/system",
+            payload=_envelope(
+                {"platform": "Netgate 6100", "serial": "123", "netgate_id": "abc"}
+            ),
+        )
+        m.get(
+            f"{API}/system/hostname",
+            payload=_envelope({"hostname": "pf", "domain": "lan"}),
+        )
+        info = await client.get_system_info()
+    assert info == {
+        "hostname": "pf",
+        "domain": "lan",
+        "serial": "123",
+        "netgate_device_id": "abc",
+        "platform": "Netgate 6100",
     }
 
-    assert dict_get(data, "telemetry.system.version") == "2.6.0"
-    assert dict_get(data, "telemetry.interfaces.0.status") == "up"
-    assert dict_get(data, "telemetry.2") == "numeric_key_test"
+
+async def test_carp_status_reduces_to_bool(client):
+    with aioresponses() as m:
+        m.get(
+            f"{API}/status/carp",
+            payload=_envelope({"enable": True, "maintenance_mode": False}),
+        )
+        assert await client.get_carp_status() is True
+    with aioresponses() as m:
+        m.get(
+            f"{API}/status/carp",
+            payload=_envelope({"enable": True, "maintenance_mode": True}),
+        )
+        assert await client.get_carp_status() is False
 
 
-def test_normalize_service_data():
-    assert normalize_service_data({"name": "dhcpd"}) == {"name": "dhcpd"}
-    assert normalize_service_data(None) == {}
-    assert normalize_service_data('{"name": "dpinger"}') == {"name": "dpinger"}
+async def test_disable_filter_rule_patches_then_applies(client):
+    rules = [
+        {"id": 4, "tracker": 111, "disabled": False, "descr": "r"},
+        {"id": 5, "tracker": 222, "disabled": False, "descr": "r2"},
+    ]
+    with aioresponses() as m:
+        m.get(f"{API}/firewall/rules", payload=_envelope(rules))
+        m.patch(f"{API}/firewall/rule", payload=_envelope({"id": 5, "disabled": True}))
+        m.post(f"{API}/firewall/apply", payload=_envelope({"applied": True}))
+        await client.disable_filter_rule_by_tracker(222)
+        req = next(
+            r for (method, url), reqs in m.requests.items()
+            for r in reqs if method == "PATCH"
+        )
+        assert req.kwargs["json"] == {"id": 5, "disabled": True}
 
 
-@patch("custom_components.pfsense.pypfsense.xmlrpc.client.ServerProxy")
-def test_client_initialization(mock_server_proxy):
-    client_insecure = Client(
-        "https://192.168.1.1", "admin", "password", {"verify_ssl": False}
-    )
-    # The client automatically injects the auth directly into the URL!
-    assert "https://admin:password@192.168.1.1/xmlrpc.php" == client_insecure._url
-
-
-@patch("custom_components.pfsense.pypfsense.xmlrpc.client.ServerProxy")
-def test_client_php_execution_and_parsing(mock_server_proxy):
-    mock_proxy_instance = MagicMock()
-    mock_server_proxy.return_value = mock_proxy_instance
-
-    client = Client("https://192.168.1.1", "admin", "password")
-
-    # Test Firmware Version (XMLRPC direct method)
-    mock_proxy_instance.pfsense.host_firmware_version.return_value = "2.6.0-RELEASE"
-    version = client.get_host_firmware_version()
-    assert "2.6.0" in str(version)
-
-    # Test ARP Table Retrieval (exec_php)
-    client._exec_php = MagicMock()
-    client._exec_php.return_value = {
-        "data": [{"mac-address": "aa:bb:cc:dd:ee:ff", "ip-address": "10.0.0.1"}]
+async def test_build_telemetry_shape():
+    system = {
+        "cpu_usage": 12.5,
+        "cpu_count": 4,
+        "mem_usage": 20,
+        "swap_usage": None,
+        "cpu_load_avg": [0.1, 0.2, 0.3],
+        "temp_c": 50,
+        "uptime": "1 Day",
     }
-    arp_table = client.get_arp_table()
-    assert len(arp_table) == 1
-
-
-@patch("custom_components.pfsense.pypfsense.xmlrpc.client.ServerProxy")
-def test_client_exception_handling(mock_server_proxy):
-    mock_proxy_instance = MagicMock()
-    mock_server_proxy.return_value = mock_proxy_instance
-    client = Client("https://192.168.1.1", "admin", "password")
-
-    mock_proxy_instance.pfsense.exec_php.side_effect = xmlrpc.client.Fault(
-        1, "Authentication Failed"
-    )
-    try:
-        client.get_telemetry()
-    except xmlrpc.client.Fault:
-        pass
+    interfaces = [
+        {"name": "wan", "descr": "WAN", "ipaddr": "1.2.3.4", "inbytes": 10},
+        {"name": "lan", "descr": "LAN", "inbytes": 5},
+    ]
+    gateways = [{"name": "WAN_DHCP", "delay": 1.2, "status": "online"}]
+    ovpn = [
+        {"vpnid": 1, "name": "S", "conns": [{"bytes_recv": 100, "bytes_sent": 50}]}
+    ]
+    t = _build_telemetry(system, interfaces, gateways, ovpn)
+    assert t["wan_ip"] == "1.2.3.4"
+    assert t["cpu"]["used_percent"] == 12.5
+    assert t["system"]["load_average"]["five_minute"] == 0.2
+    assert t["interfaces"]["lan"]["ifname"] == "lan"
+    assert t["gateways"]["WAN_DHCP"]["status"] == "online"
+    assert t["openvpn"]["servers"]["1"]["connected_client_count"] == 1
+    assert t["openvpn"]["servers"]["1"]["total_bytes_recv"] == 100

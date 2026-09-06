@@ -1,151 +1,105 @@
-import pytest
-from unittest.mock import patch, MagicMock
+"""Binary sensor tests (integration boots and CARP state is reflected)."""
 
+from unittest.mock import AsyncMock, patch
+
+import pytest
+from homeassistant.const import CONF_URL, CONF_VERIFY_SSL, STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant
-from homeassistant.const import STATE_ON, STATE_OFF
-from homeassistant.components.binary_sensor import (
-    BinarySensorDeviceClass,
-    BinarySensorEntityDescription,
-)
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.pfsense.const import DOMAIN, COORDINATOR
-from custom_components.pfsense.binary_sensor import PfSenseCarpStatusBinarySensor
+from custom_components.pfsense.const import CONF_API_KEY, COORDINATOR, DOMAIN
+
+
+@pytest.fixture(autouse=True)
+def auto_enable_custom_integrations(enable_custom_integrations):
+    yield
 
 
 @pytest.fixture
 def mock_pfsense_client():
-    """Mock the pfSense client for binary sensor tests."""
-    mock_client = MagicMock()
-    mock_client.get_system_info.return_value = {
+    client = AsyncMock()
+    client.get_system_info.return_value = {
         "hostname": "router",
         "domain": "local",
         "netgate_device_id": "mock_id_12345",
-    }
-    mock_client.get_host_firmware_version.return_value = {
+        "serial": "1",
         "platform": "pfSense",
-        "firmware": {"version": "2.6.0"},
     }
-    # Provide empty iterables to prevent coordinator dict_get crashes
-    mock_client.get_telemetry.return_value = {}
-    mock_client.get_config.return_value = {}
-    mock_client.get_interfaces.return_value = {}
-    mock_client.get_services.return_value = []
-    mock_client.get_carp_interfaces.return_value = []
-    mock_client.get_dhcp_leases.return_value = []
+    client.get_host_firmware_version.return_value = {
+        "platform": "pfSense",
+        "firmware": {"version": "26.07-RELEASE"},
+    }
+    client.get_telemetry.return_value = {
+        "interfaces": {},
+        "gateways": {},
+        "gateways_detail": {},
+        "openvpn": {"servers": {}},
+        "system": {"load_average": {}},
+        "cpu": {},
+        "memory": {},
+        "mbuf": {},
+        "filesystems": [],
+        "wan_ip": "1.2.3.4",
+    }
+    client.get_services.return_value = []
+    client.get_carp_interfaces.return_value = []
+    client.get_dhcp_leases.return_value = []
+    client.get_dns_servers.return_value = []
+    client.get_filter_rules.return_value = []
+    client.get_nat_port_forward_rules.return_value = []
+    client.get_nat_outbound_rules.return_value = []
+    return client
 
-    # THE FIX: Return an empty dict so the update platform doesn't store a MagicMock!
-    mock_client.get_firmware_update_info.return_value = {}
 
-    return mock_client
+def _entry(entry_id):
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=3,
+        title="router.local",
+        unique_id="mock_id_12345",
+        data={
+            CONF_URL: "https://192.168.1.1:8444",
+            CONF_API_KEY: "k",
+            CONF_VERIFY_SSL: False,
+        },
+        options={"device_tracker_enabled": False},
+        entry_id=entry_id,
+    )
+
+
+async def _setup(hass, entry, client):
+    entry.add_to_hass(hass)
+    with (
+        patch(
+            "custom_components.pfsense.pfSenseClient", return_value=client
+        ),
+        patch("custom_components.pfsense.async_load_cache", return_value=None),
+        patch("custom_components.pfsense.async_save_cache"),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
 
 
 @pytest.mark.asyncio
-async def test_binary_sensors_active(hass: HomeAssistant, mock_pfsense_client):
-    """Test binary sensors when states are True/Active."""
-
-    # Simulate an active CARP node with pending system notices
+async def test_carp_sensor_on(hass: HomeAssistant, mock_pfsense_client):
     mock_pfsense_client.get_carp_status.return_value = True
-    mock_pfsense_client.are_notices_pending.return_value = True
-    mock_pfsense_client.get_notices.return_value = {"id_1": "Update available"}
+    await _setup(hass, _entry("carp_on"), mock_pfsense_client)
 
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="router.local",
-        data={
-            "url": "https://192.168.1.1",
-            "username": "admin",
-            "password": "password",
-        },
-        options={"device_tracker_enabled": False},
-        entry_id="pfsense_binary_test_on",
-        version=2,
-    )
-    entry.add_to_hass(hass)
+    coordinator = hass.data[DOMAIN]["carp_on"][COORDINATOR]
+    assert coordinator.data["carp_status"] is True
+    # Notices have no REST endpoint; the key is present but always empty/false.
+    assert coordinator.data["notices"]["pending_notices_present"] is False
 
-    with (
-        patch(
-            "custom_components.pfsense.pfSenseClient", return_value=mock_pfsense_client
-        ),
-        patch("custom_components.pfsense.async_load_cache", return_value=None),
-        patch("custom_components.pfsense.async_save_cache"),
-    ):
-        assert await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
-
-    # 1. Pending Notices Sensor
     notices_sensor = hass.states.get(
         "binary_sensor.router_local_pending_notices_present"
     )
-    assert notices_sensor is not None
-    assert notices_sensor.state == STATE_ON
-
-    # Check attributes and device class
-    assert (
-        notices_sensor.attributes.get("device_class") == BinarySensorDeviceClass.PROBLEM
-    )
-    assert notices_sensor.attributes.get("pending_notices") == {
-        "id_1": "Update available"
-    }
-
-    # 2. CARP Status Sensor
-    coordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
-    carp_entity = PfSenseCarpStatusBinarySensor(
-        entry,
-        coordinator,
-        BinarySensorEntityDescription(key="carp.status", name="CARP Status"),
-        False,
-    )
-    assert carp_entity.is_on is True
+    assert notices_sensor.state == STATE_OFF
 
 
 @pytest.mark.asyncio
-async def test_binary_sensors_inactive(hass: HomeAssistant, mock_pfsense_client):
-    """Test binary sensors when states are False/Inactive."""
-
-    # Simulate an inactive CARP node with no system notices
+async def test_carp_sensor_off(hass: HomeAssistant, mock_pfsense_client):
     mock_pfsense_client.get_carp_status.return_value = False
-    mock_pfsense_client.are_notices_pending.return_value = False
-    mock_pfsense_client.get_notices.return_value = {}
+    await _setup(hass, _entry("carp_off"), mock_pfsense_client)
 
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="router.local",
-        data={
-            "url": "https://192.168.1.1",
-            "username": "admin",
-            "password": "password",
-        },
-        options={"device_tracker_enabled": False},
-        entry_id="pfsense_binary_test_off",
-        version=2,
-    )
-    entry.add_to_hass(hass)
-
-    with (
-        patch(
-            "custom_components.pfsense.pfSenseClient", return_value=mock_pfsense_client
-        ),
-        patch("custom_components.pfsense.async_load_cache", return_value=None),
-        patch("custom_components.pfsense.async_save_cache"),
-    ):
-        assert await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
-
-    # 1. Pending Notices Sensor
-    notices_sensor = hass.states.get(
-        "binary_sensor.router_local_pending_notices_present"
-    )
-    assert notices_sensor is not None
-    assert notices_sensor.state == STATE_OFF
-    assert notices_sensor.attributes.get("pending_notices") == {}
-
-    # 2. CARP Status Sensor
-    coordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
-    carp_entity = PfSenseCarpStatusBinarySensor(
-        entry,
-        coordinator,
-        BinarySensorEntityDescription(key="carp.status", name="CARP Status"),
-        False,
-    )
-    assert carp_entity.is_on is False
+    coordinator = hass.data[DOMAIN]["carp_off"][COORDINATOR]
+    assert coordinator.data["carp_status"] is False
