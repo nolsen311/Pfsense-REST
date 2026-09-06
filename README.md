@@ -1,4 +1,4 @@
-# pfSense-Pro
+# pfSense-REST
 
 A Home Assistant integration for pfSense® firewalls, built on the **pfSense REST
 API v2** (`pfSense-pkg-RESTAPI`). It surfaces live system, interface, gateway,
