@@ -28,7 +28,7 @@ Resolved on hardware since the first draft — see "Findings from live hardware"
 GUI-authored rules; `PATCH /firewall/rule` and empty `statetype`.
 
 The integration has since been rewritten and shipped (all seven phases below are
-done; see repo history through `v0.10.1`). This document is now two things: the
+done; see repo history through `v0.10.2`). This document is now two things: the
 reference for pfRest behaviour, and — in "Project state & conventions" — how the
 repo is built, tested and released.
 
@@ -121,6 +121,34 @@ current state of the repo — read it before touching tooling, tests or a releas
   2021). Nothing icon-related lives in this repo; a 0-byte `brand/icon.png` stub
   is dead weight. Changing the domain would forfeit the inherited icon.
 
+### Authentication (shipped `v0.10.2`)
+
+Supersedes the "API key only" plan below. pfRest v2 exposes three
+mutually-exclusive schemes and the integration now offers all three; the config
+entry records which in `CONF_AUTH_METHOD` (`"api_key"` / `"basic"` / `"jwt"`).
+
+- **`Client(url, session, *, auth_method, api_key | username/password, verify_ssl)`**
+  in `pypfsense`. `api_key` → `x-api-key` header. `basic` → `Authorization: Basic`
+  (built by hand — no deprecated `aiohttp.BasicAuth`). `jwt` → a Bearer token
+  minted from `POST /api/v2/auth/jwt` (authenticated with Basic; response
+  `{"data":{"token": ...}}`, TTL `RESTAPISettings.jwt_exp`, default 3600s),
+  cached on the client and, on a `401`, cleared + re-minted + the call retried
+  once (`_retried` guard; the mint path itself never retries).
+- **`client_from_config(url, session, data, verify_ssl)`** (also in `pypfsense`)
+  builds the right client from a config-entry mapping. Used by both
+  `async_setup_entry` and `config_flow.py`; that is also the patch target in
+  tests (`custom_components.pfsense.client_from_config` /
+  `...config_flow.client_from_config`).
+- **Config flow `VERSION = 4`.** `async_step_user` is a menu
+  (`api_key` / `basic` / `jwt`) routing to a per-method form; `reauth_confirm`
+  re-prompts for whatever the entry's method needs. `async_migrate_entry`
+  v3 → v4 stamps `auth_method: api_key` on existing entries (unique id
+  unchanged). The box must have the chosen method enabled at
+  **System > REST API > Settings** (`auth_methods`, default `["BasicAuth"]`);
+  the `invalid_auth` string says so.
+- Old XML-RPC (`v2`) entries are still stripped and pushed to reauth — their
+  stored password is *not* revived as Basic auth.
+
 ### Lint / format
 
 - `pyproject.toml` `[tool.ruff]` is the **Home Assistant core selection,
@@ -160,19 +188,24 @@ current state of the repo — read it before touching tooling, tests or a releas
    on the feature branch. **Never let the tag out-run the manifest** — that was
    the 0.9.x tag/manifest-lag bug.
 2. Merge to `main` (a merge commit or rebase, so per-commit history survives).
-3. Create a GitHub Release: tag `v<version>` on `main`, publish (not draft, not
-   pre-release). `.github/workflows/release.yml` (trigger: `release: published`)
-   **verifies `v<version>` == `manifest.json` version** and fails loudly on a
-   mismatch, then builds and attaches `pfsense.zip`. It no longer edits the
-   manifest.
+3. Create a GitHub Release: tag `v<version>` on `main`.
+   `.github/workflows/release.yml` (trigger: `release: published`, which fires
+   for pre-releases too) **verifies `v<version>` == `manifest.json` version**
+   and fails loudly on a mismatch, then builds and attaches `pfsense.zip`. It
+   no longer edits the manifest. The asset-upload step echoes the release's
+   `prerelease` / `draft` flags back so attaching the zip can't promote a
+   pre-release. A pre-release must use a plain `vX.Y.Z` tag — a `-rc`/`-beta`
+   suffix would fail the version check. HACS shows pre-releases only to users
+   who enable "Show beta versions".
 4. `.github/workflows/release-drafter.yml` drafts notes from PR labels
    (config: `.github/release-drafter.yml`); its suggested version is a plain
    patch bump off the last tag — override the tag when it's wrong.
 - Version must only ever increase (HACS treats a lower manifest/tag as a
   downgrade and shows no update — see the HACS aside above).
-- Released so far: `v0.9.0`, `v0.9.1`, `v0.9.3` (skipped `v0.9.2`), `v0.10.0`;
-  `v0.10.1` in progress (docs/tooling + the CARP binary sensor now enabled by
-  default).
+- Released so far: `v0.9.0`, `v0.9.1`, `v0.9.3` (skipped `v0.9.2`), `v0.10.0`,
+  `v0.10.1` (docs/tooling + CARP binary sensor now enabled by default; the two
+  HA-CI test fixes). `v0.10.2` = the multi-method auth feature, on `main` and
+  ready to tag.
 
 ## Target environment (confirmed)
 
@@ -182,7 +215,7 @@ current state of the repo — read it before touching tooling, tests or a releas
 | REST API package | community **pfSense-pkg-RESTAPI v2.10.2** (`pfrest`; Netgate ships it, it is not a separate fork) |
 | API base path | `/api/v2/` |
 | API port | **non-standard** on this box (`8444`); the GUI/HAProxy is on `443`, and `8443` is an unrelated API. The config flow must take a full base URL including port. |
-| Auth header | `x-api-key: <key>` (schema also offers `BasicAuth` and `JWTAuth`; we use the key) |
+| Auth schemes | `securitySchemes`: `KeyAuth` (`x-api-key`), `BasicAuth` (HTTP Basic), `JWTAuth` (`Authorization: Bearer`). All three are wired up — see "Project state → Authentication". `POST /api/v2/auth/jwt` (Basic-authed) mints a token; `RESTAPISettings.auth_methods` (default `["BasicAuth"]`) gates which the box accepts. |
 | Schema URL | `https://<host>:<port>/api/v2/schema/openapi` (JSON; **not** `openapi.json`). Swagger UI at `/api/v2/documentation`. |
 | Success envelope | `{"code":200,"status":"ok","response_id":"SUCCESS","message":"","data":{...},"_links":{}}` |
 | Error envelope | same shape, non-2xx `code`, human `message`, machine `response_id` (e.g. `AUTH_AUTHENTICATION_FAILED`, `MODEL_REQUIRES_ID`, `MODELSET_FIRST_REQUESTED_WITH_NO_MODEL_OBJECTS`) |
@@ -194,8 +227,9 @@ current state of the repo — read it before touching tooling, tests or a releas
 
 1. **Full replacement, REST v2 only.** No XML-RPC fallback; installs without the
    REST API package (or below its minimum) are out of scope for this fork.
-2. **Auth: API key via `x-api-key`.** The config flow's `password` field is
-   replaced by `api_key`. `username` becomes informational or is dropped.
+2. **Auth: API key via `x-api-key`.** *(Superseded in `v0.10.2` — the flow now
+   offers API key, username+password and JWT; see "Project state →
+   Authentication". The rest of this list still holds.)*
 3. **Native async.** `aiohttp` via
    `homeassistant.helpers.aiohttp_client.async_get_clientsession(hass)`. Rationale:
    the repo already leans this way (`respx` is in `requirements*.txt`), it is the
@@ -204,14 +238,19 @@ current state of the repo — read it before touching tooling, tests or a releas
    lets the poll fan out with `asyncio.gather`. `pypfsense` client methods become
    coroutines. Swap `respx` → `aioresponses` in the test requirements.
 4. **Config-entry schema bumps to v3** with a reauth flow (an API key cannot be
-   derived from a stored password).
+   derived from a stored password). *(Now at v4 — v3 → v4 stamps
+   `auth_method`.)*
 
 ## Connection / auth layer
 
+*(Auth is now multi-method — see "Project state → Authentication". Everything
+else here still applies.)*
+
 - Base URL: user-entered, e.g. `https://pfsense.example:8444`. Keep scheme + netloc
   (+ port), append `/api/v2`.
-- Send `x-api-key: <key>` on every request. Respect a `verify_ssl` option
-  (`ClientSession` with an ssl context, or `ssl=False`).
+- Attach the auth header/credentials for the entry's method on every request.
+  Respect a `verify_ssl` option (`ClientSession` with an ssl context, or
+  `ssl=False`).
 - Parse the envelope; treat non-2xx `code` as an error carrying `response_id` +
   `message`.
 - Config-flow error mapping:
@@ -509,14 +548,15 @@ state. (Weak optional substitute: `GET /api/v2/status/logs/system`.)
 
 ## Config entry & migration
 
-- `const.py`: add `CONF_API_KEY`. Keep `CONF_USERNAME` optional/informational or
-  remove it. Remove password constants from the flow.
+*(Current state: `VERSION = 4`, entries carry `CONF_AUTH_METHOD` — see
+"Project state → Authentication". The migration chain is v1→v2 (tls_insecure),
+v2→v3 (strip XML-RPC creds, force reauth), v3→v4 (stamp `auth_method:
+api_key`). The unique id stays `slugify(<netgate_id>)` throughout, so entities
+re-attach cleanly. Original v2→v3 notes kept below for history.)*
+
 - `config_flow.py` `VERSION` 2 → 3. `async_migrate_entry`: for v2 entries, drop
   `CONF_PASSWORD` and trigger reauth (`ConfigEntryAuthFailed` / a `reauth` step)
-  so the user pastes an API key. The unique id stays `slugify(<netgate_id>)`,
-  which equals the old `slugify(netgate_device_id)` value, so entities re-attach
-  cleanly.
-- Add a `reauth` step to the config flow.
+  so the user pastes an API key.
 
 ## Async client shape
 
