@@ -2,24 +2,23 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 from datetime import timedelta
 import logging
-import math
 import re
 import time
 from typing import Callable
 
-import async_timeout
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
-    CONF_PASSWORD,
     CONF_SCAN_INTERVAL,
     CONF_URL,
-    CONF_USERNAME,
     CONF_VERIFY_SSL,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import (
@@ -30,6 +29,7 @@ from homeassistant.helpers.update_coordinator import (
 from homeassistant.helpers.storage import Store
 
 from .const import (
+    CONF_API_KEY,
     CONF_DEVICE_TRACKER_ENABLED,
     CONF_DEVICE_TRACKER_SCAN_INTERVAL,
     CONF_TLS_INSECURE,
@@ -48,6 +48,7 @@ from .const import (
     UNDO_UPDATE_LISTENER,
 )
 from .pypfsense import Client as pfSenseClient
+from .pypfsense import PfSenseAuthError, PfSensePrivilegeError
 from .services import ServiceRegistrar
 
 _LOGGER = logging.getLogger(__name__)
@@ -91,6 +92,97 @@ def dict_get(data: dict, path: str, default=None):
     return result
 
 
+def _legacy_rule(rule: dict) -> dict:
+    """Reshape a REST v2 firewall/NAT rule into the legacy ``$config`` form that
+    ``switch.py`` still consumes: string ``tracker`` / ``created.time``,
+    hyphenated ``associated-rule-id``, and ``disabled`` as a presence key."""
+    out = dict(rule)
+    if out.get("tracker") is not None:
+        out["tracker"] = str(out["tracker"])
+    if out.get("created_time") is not None:
+        out["created"] = {"time": str(out["created_time"])}
+    if out.get("associated_rule_id"):
+        out["associated-rule-id"] = out["associated_rule_id"]
+    if out.get("disabled"):
+        out["disabled"] = ""
+    else:
+        out.pop("disabled", None)
+    return out
+
+
+def _legacy_config(
+    filter_rules: list, nat_port_forwards: list, nat_outbound: list, dns_servers: list
+) -> dict:
+    """Synthesize the subset of the old ``get_config()`` blob that entities read.
+
+    Only ``config.filter.rule``, ``config.nat.rule``,
+    ``config.nat.outbound.rule`` and ``config.system.dnsserver`` are consumed.
+    """
+    return {
+        "filter": {"rule": [_legacy_rule(r) for r in filter_rules]},
+        "nat": {
+            "rule": [_legacy_rule(r) for r in nat_port_forwards],
+            "outbound": {"rule": [_legacy_rule(r) for r in nat_outbound]},
+        },
+        "system": {"dnsserver": dns_servers},
+    }
+
+
+_INTERFACE_RATE_PROPS = (
+    "inbytes",
+    "outbytes",
+    "inbytespass",
+    "outbytespass",
+    "inpkts",
+    "outpkts",
+    "inpktspass",
+    "outpktspass",
+)
+
+
+def _compute_interface_rates(new_state, elapsed_time, scan_interval):
+    interfaces = dict_get(new_state, "telemetry.interfaces", {})
+    for interface_name, interface in interfaces.items():
+        previous_interface = dict_get(
+            new_state, f"previous_state.telemetry.interfaces.{interface_name}"
+        )
+        if previous_interface is None:
+            continue
+        for prop in _INTERFACE_RATE_PROPS:
+            current = interface.get(prop)
+            previous = previous_interface.get(prop)
+            if current is None or previous is None:
+                continue
+            rate = abs(current - previous) / elapsed_time if elapsed_time > 0 else 0
+            if "pkts" in prop:
+                label, value = "packets_per_second", rate
+            else:
+                label, value = "kilobytes_per_second", rate / 1000
+            new_property = f"{prop}_{label}"
+            if elapsed_time >= scan_interval:
+                interface[new_property] = int(round(value))
+            else:
+                previous_value = previous_interface.get(new_property)
+                interface[new_property] = int(
+                    round(previous_value if previous_value is not None else value)
+                )
+
+
+def _compute_openvpn_rates(new_state, elapsed_time):
+    servers = dict_get(new_state, "telemetry.openvpn.servers", {})
+    previous_servers = dict_get(
+        new_state, "previous_state.telemetry.openvpn.servers", {}
+    )
+    for server_name, server in servers.items():
+        previous_server = previous_servers.get(server_name)
+        if previous_server is None:
+            continue
+        for prop in ("total_bytes_recv", "total_bytes_sent"):
+            change = abs(server.get(prop, 0) - previous_server.get(prop, 0))
+            rate = change / elapsed_time if elapsed_time > 0 else 0
+            server[f"{prop}_kilobytes_per_second"] = int(round(rate / 1000))
+
+
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry):
     """Handle options update."""
     if hass.data[DOMAIN][entry.entry_id].get(SHOULD_RELOAD, True):
@@ -105,39 +197,40 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     options = entry.options
 
     url = config[CONF_URL]
-    username = config[CONF_USERNAME]
-    password = config[CONF_PASSWORD]
+    api_key = config.get(CONF_API_KEY)
+    if not api_key:
+        # Migrated-from-password entry that hasn't been re-authed yet.
+        raise ConfigEntryAuthFailed("no pfSense REST API key configured")
     verify_ssl = config.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
     device_tracker_enabled = options.get(
         CONF_DEVICE_TRACKER_ENABLED, DEFAULT_DEVICE_TRACKER_ENABLED
     )
 
-    client = pfSenseClient(url, username, password, {"verify_ssl": verify_ssl})
+    session = async_get_clientsession(hass, verify_ssl)
+    client = pfSenseClient(url, api_key, session, {"verify_ssl": verify_ssl})
     data = PfSenseData(client, entry, hass)
     scan_interval = options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
 
     async def async_update_data():
-        """Fetch data from pfSense."""
+        """Fetch data from pfSense, falling back to the on-disk cache on failure."""
         try:
-            async with async_timeout.timeout(scan_interval - 1):
-                # Volledig asynchroon en veilig via de achtergrond thread!
-                new_state = await hass.async_add_executor_job(data.update)
-                if not new_state:
-                    raise UpdateFailed("Geen data ontvangen van pfSense")
-
-                # Sla op in de Smart Cache!
-                await async_save_cache(hass, entry.entry_id, new_state)
-                return new_state
-
+            async with asyncio.timeout(scan_interval - 1):
+                new_state = await data.update()
+            if not new_state:
+                raise UpdateFailed("no data received from pfSense")
+            await async_save_cache(hass, entry.entry_id, new_state)
+            return new_state
+        except (PfSenseAuthError, PfSensePrivilegeError) as err:
+            raise ConfigEntryAuthFailed(str(err)) from err
         except Exception as err:
             _LOGGER.warning(
-                f"Fout bij ophalen pfSense: {err}. We proberen de cache te laden..."
+                "pfSense poll failed (%s); trying the local cache", err
             )
             cached_data = await async_load_cache(hass, entry.entry_id)
             if cached_data:
-                data._state = cached_data  # Zet de interne state terug
+                data._state = cached_data
                 return cached_data
-            raise UpdateFailed(f"Fout en geen cache beschikbaar: {err}")
+            raise UpdateFailed(f"poll failed and no cache available: {err}")
 
     coordinator = DataUpdateCoordinator(
         hass,
@@ -158,17 +251,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         )
 
         async def async_update_device_tracker_data():
-            """Fetch data from pfSense."""
+            """Fetch the ARP table from pfSense."""
             try:
-                async with async_timeout.timeout(device_tracker_scan_interval - 1):
-                    new_dt_state = await hass.async_add_executor_job(
-                        lambda: device_tracker_data.update({"scope": "device_tracker"})
+                async with asyncio.timeout(device_tracker_scan_interval - 1):
+                    new_dt_state = await device_tracker_data.update(
+                        {"scope": "device_tracker"}
                     )
-                    if not new_dt_state:
-                        raise UpdateFailed("Geen device tracker data ontvangen")
-                    return new_dt_state
+                if not new_dt_state:
+                    raise UpdateFailed("no device tracker data received")
+                return new_dt_state
+            except (PfSenseAuthError, PfSensePrivilegeError) as err:
+                raise ConfigEntryAuthFailed(str(err)) from err
             except Exception as err:
-                _LOGGER.warning(f"Device tracker update faalde: {err}")
+                _LOGGER.warning("pfSense device tracker update failed: %s", err)
                 if device_tracker_data._state:
                     return device_tracker_data._state
                 raise UpdateFailed(err)
@@ -219,18 +314,27 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
-    """Migrate an old config entry."""
-    version = config_entry.version
-    if version == 1:
-        hass.config_entries.async_update_entry(config_entry, version=2)
-        version = config_entry.version
-        tls_insecure = config_entry.data.get(CONF_TLS_INSECURE, DEFAULT_TLS_INSECURE)
-        data = dict(config_entry.data)
-        if CONF_TLS_INSECURE in data.keys():
-            del data[CONF_TLS_INSECURE]
-        if CONF_VERIFY_SSL not in data.keys():
-            data[CONF_VERIFY_SSL] = not tls_insecure
-        hass.config_entries.async_update_entry(config_entry, data=data)
+    """Migrate an old config entry.
+
+    v1 -> v2: fold the legacy ``tls_insecure`` flag into ``verify_ssl``.
+    v2 -> v3: XML-RPC username/password auth is gone. Strip the stored password
+    and force a reauth so the user can enter a REST API key. The unique id
+    (``slugify(netgate id)``) is unchanged, so entities re-attach afterwards.
+    """
+    data = dict(config_entry.data)
+
+    if config_entry.version == 1:
+        tls_insecure = data.pop(CONF_TLS_INSECURE, DEFAULT_TLS_INSECURE)
+        data.setdefault(CONF_VERIFY_SSL, not tls_insecure)
+        hass.config_entries.async_update_entry(config_entry, data=data, version=2)
+
+    if config_entry.version == 2:
+        for legacy_key in ("password", "username"):
+            data.pop(legacy_key, None)
+        hass.config_entries.async_update_entry(config_entry, data=data, version=3)
+        # No API key yet: async_setup_entry raises ConfigEntryAuthFailed, which
+        # starts the reauth flow so the user can paste a key.
+
     return True
 
 
@@ -249,192 +353,98 @@ class PfSenseData:
     def state(self):
         return self._state
 
-    def update(self, opts={}):
-        """Fetch the latest state from pfSense. Draait synchroon in executor."""
+    async def update(self, opts=None):
+        """Fetch the latest state from pfSense over the REST API."""
+        opts = opts or {}
         new_state = {}
 
         try:
             current_time = time.time()
             previous_state = copy.deepcopy(self._state)
-            if "previous_state" in previous_state.keys():
-                del previous_state["previous_state"]
+            previous_state.pop("previous_state", None)
 
             new_state["update_time"] = current_time
             new_state["previous_state"] = previous_state
 
-            new_state["system_info"] = self._client.get_system_info()
-            new_state["host_firmware_version"] = (
-                self._client.get_host_firmware_version()
+            if opts.get("scope") == "device_tracker":
+                system_info, arp_table = await asyncio.gather(
+                    self._client.get_system_info(),
+                    self._client.get_arp_table(True),
+                )
+                new_state["system_info"] = system_info
+                new_state["arp_table"] = arp_table
+                self._state = new_state
+                return new_state
+
+            (
+                system_info,
+                host_firmware_version,
+                telemetry_data,
+                services,
+                carp_interfaces,
+                carp_status,
+                dhcp_leases,
+                dns_servers,
+                filter_rules,
+                nat_port_forwards,
+                nat_outbound,
+            ) = await asyncio.gather(
+                self._client.get_system_info(),
+                self._client.get_host_firmware_version(),
+                self._client.get_telemetry(),
+                self._client.get_services(),
+                self._client.get_carp_interfaces(),
+                self._client.get_carp_status(),
+                self._client.get_dhcp_leases(),
+                self._client.get_dns_servers(),
+                self._client.get_filter_rules(),
+                self._client.get_nat_port_forward_rules(),
+                self._client.get_nat_outbound_rules(),
             )
 
-            if "scope" in opts.keys() and opts["scope"] == "device_tracker":
-                try:
-                    new_state["arp_table"] = self._client.get_arp_table(True)
-                except BaseException as err:
-                    _LOGGER.error(f"failed to retrieve arp table {err=}, {type(err)=}")
-            else:
-                try:
-                    self._firmware_update_info = self._client.get_firmware_update_info()
-                except Exception:
-                    pass  # Timeout of fout, we pakken hem volgende keer
+            telemetry_data.setdefault("pfblockerng", {})
+            new_state["system_info"] = system_info
+            new_state["host_firmware_version"] = host_firmware_version
+            new_state["firmware_update_info"] = None
+            new_state["telemetry"] = telemetry_data
+            new_state["config"] = _legacy_config(
+                filter_rules, nat_port_forwards, nat_outbound, dns_servers
+            )
+            new_state["services"] = services
+            new_state["carp_interfaces"] = carp_interfaces
+            new_state["carp_status"] = carp_status
+            new_state["dhcp_leases"] = dhcp_leases
+            new_state["dhcp_stats"] = {}
+            # Notices have no REST v2 endpoint; keep the key so entities don't KeyError.
+            new_state["notices"] = {
+                "pending_notices_present": False,
+                "pending_notices": [],
+            }
 
-                # Haal de telemetrie op (inclusief onze nieuwe WAN IP en pfBlockerNG data!)
-                telemetry_data = self._client.get_telemetry()
+            lease_stats = {"total": 0, "online": 0, "idle_offline": 0}
+            for lease in dhcp_leases:
+                if lease.get("active_status") == "expired":
+                    continue
+                lease_stats["total"] += 1
+                online = lease.get("online_status")
+                if online in ("active", "active/online", "online"):
+                    lease_stats["online"] += 1
+                elif online in ("offline", "idle/offline", "idle"):
+                    lease_stats["idle_offline"] += 1
+            new_state["dhcp_stats"]["leases"] = lease_stats
 
-                new_state["firmware_update_info"] = self._firmware_update_info
-                new_state["telemetry"] = telemetry_data
-                new_state["config"] = self._client.get_config()
-                new_state["interfaces"] = self._client.get_interfaces()
-                new_state["services"] = self._client.get_services()
-                new_state["carp_interfaces"] = self._client.get_carp_interfaces()
-                new_state["carp_status"] = self._client.get_carp_status()
-                new_state["dhcp_leases"] = self._client.get_dhcp_leases(False)
-                new_state["dhcp_stats"] = {}
-                new_state["notices"] = {
-                    "pending_notices_present": self._client.are_notices_pending(),
-                    "pending_notices": self._client.get_notices(),
-                }
+            scan_interval = self._config_entry.options.get(
+                CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
+            )
+            previous_update_time = dict_get(new_state, "previous_state.update_time")
+            if previous_update_time is not None:
+                elapsed_time = current_time - previous_update_time
+                _compute_interface_rates(new_state, elapsed_time, scan_interval)
+                _compute_openvpn_rates(new_state, elapsed_time)
 
-                # Zorg dat de specifieke keys plat in de telemetry dictionary komen te staan voor de sensoren
-                new_state["telemetry"]["wan_ip"] = telemetry_data.get("wan_ip")
-                new_state["telemetry"]["pfblockerng"] = telemetry_data.get(
-                    "pfblockerng"
-                )
-
-                lease_stats = {"total": 0, "online": 0, "idle_offline": 0}
-                for lease in new_state["dhcp_leases"]:
-                    if "act" in lease.keys() and lease["act"] == "expired":
-                        continue
-                    lease_stats["total"] += 1
-                    if "online" in lease.keys():
-                        if lease["online"] in ["active", "active/online", "online"]:
-                            lease_stats["online"] += 1
-                        if lease["online"] in ["offline", "idle/offline", "idle"]:
-                            lease_stats["idle_offline"] += 1
-                new_state["dhcp_stats"]["leases"] = lease_stats
-
-                # Bereken PPS en KBPS
-                scan_interval = self._config_entry.options.get(
-                    CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
-                )
-                update_time = dict_get(new_state, "update_time")
-                previous_update_time = dict_get(new_state, "previous_state.update_time")
-
-                if previous_update_time is not None:
-                    elapsed_time = update_time - previous_update_time
-
-                    previous_cpu = dict_get(new_state, "previous_state.telemetry.cpu")
-                    if previous_cpu is not None:
-                        current_cpu = dict_get(new_state, "telemetry.cpu")
-                        if (
-                            dict_get(previous_cpu, "ticks.total")
-                            <= dict_get(current_cpu, "ticks.total")
-                        ) and (
-                            dict_get(previous_cpu, "ticks.idle")
-                            <= dict_get(current_cpu, "ticks.idle")
-                        ):
-                            total_change = dict_get(
-                                current_cpu, "ticks.total"
-                            ) - dict_get(previous_cpu, "ticks.total")
-                            idle_change = dict_get(
-                                current_cpu, "ticks.idle"
-                            ) - dict_get(previous_cpu, "ticks.idle")
-                            if total_change > 0:
-                                new_state["telemetry"]["cpu"]["used_percent"] = (
-                                    math.floor(
-                                        ((total_change - idle_change) / total_change)
-                                        * 100
-                                    )
-                                )
-                            else:
-                                new_state["telemetry"]["cpu"]["used_percent"] = (
-                                    dict_get(
-                                        previous_state, "telemetry.cpu.used_percent"
-                                    )
-                                )
-
-                    for interface_name in dict_get(
-                        new_state, "telemetry.interfaces", {}
-                    ).keys():
-                        interface = dict_get(
-                            new_state, f"telemetry.interfaces.{interface_name}"
-                        )
-                        previous_interface = dict_get(
-                            new_state,
-                            f"previous_state.telemetry.interfaces.{interface_name}",
-                        )
-                        if previous_interface is None:
-                            break
-
-                        for prop in [
-                            "inbytes",
-                            "outbytes",
-                            "inbytespass",
-                            "outbytespass",
-                            "inbytesblock",
-                            "outbytesblock",
-                            "inpkts",
-                            "outpkts",
-                            "inpktspass",
-                            "outpktspass",
-                            "inpktsblock",
-                            "outpktsblock",
-                        ]:
-                            change = abs(interface[prop] - previous_interface[prop])
-                            rate = change / elapsed_time if elapsed_time > 0 else 0
-
-                            if "pkts" in prop:
-                                label = "packets_per_second"
-                                value = rate
-                            if "bytes" in prop:
-                                label = "kilobytes_per_second"
-                                value = rate / 1000
-
-                            new_property = f"{prop}_{label}"
-                            if elapsed_time >= scan_interval:
-                                interface[new_property] = int(round(value, 0))
-                            else:
-                                previous_value = dict_get(
-                                    previous_interface, new_property
-                                )
-                                interface[new_property] = int(
-                                    round(
-                                        previous_value
-                                        if previous_value is not None
-                                        else value,
-                                        0,
-                                    )
-                                )
-
-                    for server_name in dict_get(
-                        new_state, "telemetry.openvpn.servers", {}
-                    ).keys():
-                        if (
-                            server_name
-                            not in dict_get(
-                                new_state,
-                                "previous_state.telemetry.openvpn.servers",
-                                {},
-                            ).keys()
-                        ):
-                            continue
-
-                        server = new_state["telemetry"]["openvpn"]["servers"][
-                            server_name
-                        ]
-                        previous_server = new_state["previous_state"]["telemetry"][
-                            "openvpn"
-                        ]["servers"][server_name]
-
-                        for prop in ["total_bytes_recv", "total_bytes_sent"]:
-                            change = abs(server[prop] - previous_server[prop])
-                            rate = change / elapsed_time if elapsed_time > 0 else 0
-                            new_property = f"{prop}_kilobytes_per_second"
-                            server[new_property] = int(round(rate / 1000, 0))
-
-        except BaseException as err:
+        except BaseException:
             self._state = new_state
-            raise err
+            raise
 
         self._state = new_state
         return new_state
@@ -515,23 +525,27 @@ class PfSenseEntity(CoordinatorEntity, RestoreEntity):
     def _get_pfsense_client(self) -> pfSenseClient:
         return self.hass.data[DOMAIN][self.config_entry.entry_id][PFSENSE_CLIENT]
 
-    def service_close_notice(self, id: int | str | None = None):
-        self._get_pfsense_client().close_notice(id)
+    async def service_close_notice(self, id: int | str | None = None):
+        raise HomeAssistantError(
+            "The pfSense REST API has no notices endpoint; this service was removed."
+        )
 
-    def service_file_notice(self, **kwargs):
-        self._get_pfsense_client().file_notice(**kwargs)
+    async def service_file_notice(self, **kwargs):
+        raise HomeAssistantError(
+            "The pfSense REST API has no notices endpoint; this service was removed."
+        )
 
-    def service_start_service(
+    async def service_start_service(
         self, service_name: str, service: dict | str | None = None
     ):
-        self._get_pfsense_client().start_service(service_name, service)
+        await self._get_pfsense_client().start_service(service_name, service)
 
-    def service_stop_service(
+    async def service_stop_service(
         self, service_name: str, service: dict | str | None = None
     ):
-        self._get_pfsense_client().stop_service(service_name, service)
+        await self._get_pfsense_client().stop_service(service_name, service)
 
-    def service_restart_service(
+    async def service_restart_service(
         self,
         service_name: str,
         only_if_running: int | str | None | bool = False,
@@ -539,30 +553,32 @@ class PfSenseEntity(CoordinatorEntity, RestoreEntity):
     ):
         client = self._get_pfsense_client()
         if str(only_if_running).lower() in ["true", "1"]:
-            client.restart_service_if_running(service_name, service)
+            await client.restart_service_if_running(service_name, service)
         else:
-            client.restart_service(service_name, service)
+            await client.restart_service(service_name, service)
 
-    def service_reset_state_table(self):
-        self._get_pfsense_client().reset_state_table()
+    async def service_reset_state_table(self):
+        await self._get_pfsense_client().reset_state_table()
 
-    def service_kill_states(self, source: str, destination: str = None):
-        self._get_pfsense_client().kill_states(source, destination)
+    async def service_kill_states(self, source: str, destination: str = None):
+        await self._get_pfsense_client().kill_states(source, destination)
 
-    def service_system_halt(self):
-        self._get_pfsense_client().system_halt()
+    async def service_system_halt(self):
+        await self._get_pfsense_client().system_halt()
 
-    def service_system_reboot(self):
-        self._get_pfsense_client().system_reboot()
+    async def service_system_reboot(self):
+        await self._get_pfsense_client().system_reboot()
 
-    def service_send_wol(self, interface: str, mac: str):
-        self._get_pfsense_client().send_wol(interface, mac)
+    async def service_send_wol(self, interface: str, mac: str):
+        await self._get_pfsense_client().send_wol(interface, mac)
 
-    def service_set_default_gateway(self, gateway: str, ip_version: str):
-        self._get_pfsense_client().set_default_gateway(gateway, ip_version)
+    async def service_set_default_gateway(self, gateway: str, ip_version: str):
+        await self._get_pfsense_client().set_default_gateway(gateway, ip_version)
 
-    def service_exec_php(self, script: str):
-        self._get_pfsense_client()._exec_php(script)
+    async def service_exec_php(self, script: str):
+        raise HomeAssistantError(
+            "exec_php is not available over the pfSense REST API and was removed."
+        )
 
-    def service_exec_command(self, command: str, background: bool = False):
-        self._get_pfsense_client()._exec_command(command, background)
+    async def service_exec_command(self, command: str, background: bool = False):
+        await self._get_pfsense_client().exec_command(command, background)

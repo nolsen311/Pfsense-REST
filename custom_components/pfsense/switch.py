@@ -166,13 +166,13 @@ async def async_setup_entry(
                 # entity_category = ENTITY_CATEGORY_CONFIG
                 device_class = SwitchDeviceClass.SWITCH
 
-                if service["name"] == "openvpn":
+                if service["name"] == "openvpn" and service.get("vpnid"):
                     key = "service.{}.{}".format(
-                        service["name"] + "-" + service["vpnid"],
+                        service["name"] + "-" + str(service["vpnid"]),
                         property,
                     )
                     name = "Service {} {}".format(
-                        service["name"] + " " + service["description"], property
+                        service["name"] + " " + service.get("description", ""), property
                     )
                 else:
                     key = "service.{}.{}".format(service["name"], property)
@@ -269,9 +269,7 @@ class PfSenseFilterSwitch(PfSenseSwitch):
             return
         tracker = self._pfsense_get_tracker()
         client = self._get_pfsense_client()
-        await self.hass.async_add_executor_job(
-            client.enable_filter_rule_by_tracker, tracker
-        )
+        await client.enable_filter_rule_by_tracker(tracker)
         await self.coordinator.async_refresh()
 
     async def async_turn_off(self, **kwargs):
@@ -281,9 +279,7 @@ class PfSenseFilterSwitch(PfSenseSwitch):
             return
         tracker = self._pfsense_get_tracker()
         client = self._get_pfsense_client()
-        await self.hass.async_add_executor_job(
-            client.disable_filter_rule_by_tracker, tracker
-        )
+        await client.disable_filter_rule_by_tracker(tracker)
         await self.coordinator.async_refresh()
 
 
@@ -342,7 +338,7 @@ class PfSenseNatSwitch(PfSenseSwitch):
         if rule_type == "nat_outbound":
             method = client.enable_nat_outbound_rule_by_created_time
 
-        await self.hass.async_add_executor_job(method, tracker)
+        await method(tracker)
         await self.coordinator.async_refresh()
 
     async def async_turn_off(self, **kwargs):
@@ -358,7 +354,7 @@ class PfSenseNatSwitch(PfSenseSwitch):
         if rule_type == "nat_outbound":
             method = client.disable_nat_outbound_rule_by_created_time
 
-        await self.hass.async_add_executor_job(method, tracker)
+        await method(tracker)
         await self.coordinator.async_refresh()
 
 
@@ -407,16 +403,12 @@ class PfSenseServiceSwitch(PfSenseSwitch):
         """Turn the entity on."""
         service = self._pfsense_get_service()
         client = self._get_pfsense_client()
-        await self.hass.async_add_executor_job(
-            client.start_service, service["name"], service
-        )
+        await client.start_service(service["name"], service)
         await self.coordinator.async_refresh()
 
     async def async_turn_off(self, **kwargs):
         """Turn the entity off."""
         service = self._pfsense_get_service()
         client = self._get_pfsense_client()
-        await self.hass.async_add_executor_job(
-            client.stop_service, service["name"], service
-        )
+        await client.stop_service(service["name"], service)
         await self.coordinator.async_refresh()

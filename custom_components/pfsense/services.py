@@ -64,8 +64,8 @@ class ServiceRegistrar:
         ):
             """Dynamic extension mapping runtime command parameters directly to the Client interface."""
             client = self_entity._get_pfsense_client()
-            await self_entity.hass.async_add_executor_job(
-                client.update_alias_address, alias_name, address, action, kill_states
+            await client.update_alias_address(
+                alias_name, address, action, kill_states
             )
 
         if not hasattr(PfSenseEntity, "service_update_alias"):

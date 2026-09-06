@@ -1,36 +1,41 @@
 {
+  "title": "Connect to the pfSense firewall / router",
   "config": {
-    "abort": {
-      "already_configured": "Device is already configured"
+    "step": {
+      "user": {
+        "title": "Connect to the pfSense firewall / router",
+        "description": "Enter the base URL of the pfSense REST API (including the port, e.g. https://pfsense.local:8444) and an API key generated at System › REST API › Keys.",
+        "data": {
+          "url": "URL",
+          "api_key": "API key",
+          "name": "Firewall Name",
+          "verify_ssl": "Verify SSL certificate"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate with pfSense",
+        "description": "The pfSense integration now authenticates with a REST API key instead of a password. Enter an API key for {name} (System › REST API › Keys).",
+        "data": {
+          "api_key": "API key"
+        }
+      }
     },
     "error": {
       "cannot_connect": "Failed to connect",
-      "invalid_auth": "Invalid authentication",
-      "unknown": "Unexpected error",
-      "invalid_url_format": "Invalid URL Format",
-      "privilege_missing": "User has insufficient privileges (System - HA node sync)",
-      "connect_timeout": "Connection timeout",
-      "cannot_connect_ssl": "SSL Failure",
-      "url_redirect": "Incorrect URL (redirect)"
+      "cannot_connect_ssl": "SSL failure",
+      "invalid_auth": "Invalid API key",
+      "invalid_url_format": "Invalid URL format",
+      "privilege_missing": "The API key's user lacks the privileges required for this integration",
+      "api_not_found": "REST API not found at that URL - check the address, the port, and that the REST API package is installed",
+      "unknown": "Unexpected error"
     },
-    "step": {
-      "user": {
-        "data": {
-          "url": "URL",
-          "username": "Username",
-          "name": "Firewall Name",
-          "password": "Password",
-          "verify_ssl": "Verify SSL certificate"
-        },
-        "title": "Connect to the pfSense firewall / router"
-      }
+    "abort": {
+      "already_configured": "Device is already configured",
+      "reauth_successful": "Re-authentication was successful",
+      "wrong_device": "The API key belongs to a different pfSense device"
     }
   },
   "options": {
-    "error": {
-      "cannot_connect": "Failed to connect",
-      "unknown": "Unexpected error"
-    },
     "step": {
       "init": {
         "data": {
@@ -38,8 +43,7 @@
           "device_tracker_enabled": "Enable Device Tracker",
           "device_tracker_scan_interval": "Device Tracker Scan Interval (seconds)",
           "device_tracker_consider_home": "Device Tracker Consider Home (seconds)"
-        },
-        "description": "Configure Options."
+        }
       },
       "device_tracker": {
         "description": "Choose which devices you want to track.",
@@ -48,48 +52,5 @@
         }
       }
     }
-  },
-  "services": {
-    "update_alias": {
-      "name": "Update Firewall Alias",
-      "description": "Dynamically add or remove an IP/Host from a pfSense alias group.",
-      "fields": {
-        "entity_id": {
-          "name": "Entity ID",
-          "description": "pfSense tracking entity id."
-        },
-        "alias_name": {
-          "name": "Alias Name",
-          "description": "Name of the pfSense alias."
-        },
-        "address": {
-          "name": "Address",
-          "description": "Target IP Address"
-        },
-        "action": {
-          "name": "Action",
-          "description": "Add / Remove"
-        },
-        "kill_states": {
-          "name": "Kill States",
-          "description": "Instantly terminate target connections."
-        }
-      }
-    },
-    "toggle_dnsbl": {
-      "name": "Toggle pfBlockerNG DNSBL",
-      "description": "Instantly enable or disable DNSBL ad-blocking.",
-      "fields": {
-        "entity_id": {
-          "name": "Entity ID",
-          "description": "pfSense tracking entity id."
-        },
-        "action": {
-          "name": "Action",
-          "description": "Enable / Disable"
-        }
-      }
-    }
-  },
-  "title": "pfSense"
+  }
 }

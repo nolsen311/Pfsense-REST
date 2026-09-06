@@ -1,24 +1,25 @@
-"""Config flow for pfSense integration."""
+"""Config flow for the pfSense integration (REST API v2)."""
+
+from __future__ import annotations
 
 import logging
-from urllib.parse import quote_plus, urlparse
-import xmlrpc
+from urllib.parse import urlparse
 
 from homeassistant import config_entries
 from homeassistant.const import (
     CONF_NAME,
-    CONF_PASSWORD,
     CONF_SCAN_INTERVAL,
     CONF_URL,
-    CONF_USERNAME,
     CONF_VERIFY_SSL,
 )
 from homeassistant.core import callback
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import homeassistant.helpers.config_validation as cv
 from homeassistant.util import slugify
 import voluptuous as vol
 
 from .const import (
+    CONF_API_KEY,
     CONF_DEVICE_TRACKER_CONSIDER_HOME,
     CONF_DEVICE_TRACKER_ENABLED,
     CONF_DEVICE_TRACKER_SCAN_INTERVAL,
@@ -27,243 +28,230 @@ from .const import (
     DEFAULT_DEVICE_TRACKER_ENABLED,
     DEFAULT_DEVICE_TRACKER_SCAN_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
-    DEFAULT_USERNAME,
     DEFAULT_VERIFY_SSL,
     DOMAIN,
 )
-from .pypfsense import Client
+from .pypfsense import (
+    Client,
+    PfSenseAuthError,
+    PfSenseConnectionError,
+    PfSenseNotFoundError,
+    PfSensePrivilegeError,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 
-def cleanse_sensitive_data(message, secrets=[]):
-    for secret in secrets:
-        if secret is not None:
-            message = message.replace(secret, "[redacted]")
-            message = message.replace(quote_plus(secret), "[redacted]")
-    return message
+class InvalidURL(Exception):
+    """The URL is missing a scheme or host."""
+
+
+def _normalize_url(raw: str) -> str:
+    parts = urlparse(raw.strip())
+    if not parts.scheme or not parts.netloc:
+        raise InvalidURL
+    return f"{parts.scheme}://{parts.netloc}"
+
+
+async def _validate(hass, url: str, api_key: str, verify_ssl: bool) -> dict:
+    """Return the system_info dict, or raise a typed pypfsense error."""
+    session = async_get_clientsession(hass, verify_ssl)
+    client = Client(url, api_key, session, {"verify_ssl": verify_ssl})
+    return await client.get_system_info()
 
 
 class ConfigFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for pfSense."""
 
-    # bumping this is what triggers async_migrate_entry for the component
-    VERSION = 2
+    # Bumping this triggers async_migrate_entry. v3 == XML-RPC -> REST API v2.
+    VERSION = 3
 
-    # gets invoked without user input initially
-    # when user submits has user_input
+    def __init__(self) -> None:
+        self._reauth_entry: config_entries.ConfigEntry | None = None
+
     async def async_step_user(self, user_input=None):
-        """Handle the initial step."""
-        errors = {}
-        if user_input is not None:
+        """Initial setup step."""
+        errors: dict[str, str] = {}
+        user_input = user_input or {}
+
+        if user_input:
             try:
-                name = user_input.get(CONF_NAME, False) or None
-
-                url = user_input[CONF_URL].strip()
-                # ParseResult(
-                #     scheme='', netloc='', path='f', params='', query='', fragment=''
-                # )
-                url_parts = urlparse(url)
-                if len(url_parts.scheme) < 1:
-                    raise InvalidURL()
-
-                if len(url_parts.netloc) < 1:
-                    raise InvalidURL()
-
-                # remove any path etc details
-                url = f"{url_parts.scheme}://{url_parts.netloc}"
-                username = user_input.get(CONF_USERNAME, DEFAULT_USERNAME)
-                password = user_input[CONF_PASSWORD]
+                url = _normalize_url(user_input[CONF_URL])
+                api_key = user_input[CONF_API_KEY].strip()
                 verify_ssl = user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
+                name = user_input.get(CONF_NAME) or None
 
-                client = Client(url, username, password, {"verify_ssl": verify_ssl})
-                system_info = await self.hass.async_add_executor_job(
-                    client.get_system_info
-                )
+                system_info = await _validate(self.hass, url, api_key, verify_ssl)
 
-                if name is None:
-                    name = "{}.{}".format(
-                        system_info["hostname"], system_info["domain"]
-                    )
-
-                # https://developers.home-assistant.io/docs/config_entries_config_flow_handler#unique-ids
                 await self.async_set_unique_id(
                     slugify(system_info["netgate_device_id"])
                 )
                 self._abort_if_unique_id_configured()
 
+                if name is None:
+                    name = "{}.{}".format(
+                        system_info.get("hostname"), system_info.get("domain")
+                    )
+
                 return self.async_create_entry(
                     title=name,
                     data={
                         CONF_URL: url,
-                        CONF_PASSWORD: password,
-                        CONF_USERNAME: username,
+                        CONF_API_KEY: api_key,
                         CONF_VERIFY_SSL: verify_ssl,
                     },
                 )
-
-            # can be when using http instead of https
-            # 2022-08-16 09:43:17.803 ERROR (MainThread) [custom_components.opnsense.config_flow] Unexpected err=RemoteDisconnected('Remote end closed connection without response'), type(err)=<class 'http.client.RemoteDisconnected'>
-            # when proper permissions are not setup
-            # 2022-08-16 09:43:26.680 ERROR (MainThread) [custom_components.opnsense.config_flow] Unexpected err=TypeError('string indices must be integers'), type(err)=<class 'TypeError'>
             except InvalidURL:
                 errors["base"] = "invalid_url_format"
-            except xmlrpc.client.Fault as err:
-                if "Invalid username or password" in str(err):
-                    errors["base"] = "invalid_auth"
-                elif "Authentication failed: not enough privileges" in str(err):
-                    errors["base"] = "privilege_missing"
-                else:
-                    message = cleanse_sensitive_data(
-                        f"Unexpected {err=}, {type(err)=}", [username, password]
-                    )
-                    _LOGGER.error(message)
-                    errors["base"] = "cannot_connect"
-            except xmlrpc.client.ProtocolError as err:
-                if "307 Temporary Redirect" in str(err):
-                    errors["base"] = "url_redirect"
-                elif "301 Moved Permanently" in str(err):
-                    errors["base"] = "url_redirect"
-                else:
-                    message = cleanse_sensitive_data(
-                        f"Unexpected {err=}, {type(err)=}", [username, password]
-                    )
-                    _LOGGER.error(message)
-                    errors["base"] = "cannot_connect"
-            except OSError as err:
-                # bad response from pfSense when creds are valid but authorization is
-                # not sufficient non-admin users must have 'System - HA node sync'
-                # privilege
-                if "unsupported XML-RPC protocol" in str(err):
-                    errors["base"] = "privilege_missing"
-                elif "timed out" in str(err):
-                    errors["base"] = "connect_timeout"
-                elif "SSL:" in str(err):
-                    """OSError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1129)"""
+            except PfSenseAuthError:
+                errors["base"] = "invalid_auth"
+            except PfSensePrivilegeError:
+                errors["base"] = "privilege_missing"
+            except PfSenseNotFoundError:
+                errors["base"] = "api_not_found"
+            except PfSenseConnectionError as err:
+                if "certificate" in str(err).lower() or "ssl" in str(err).lower():
                     errors["base"] = "cannot_connect_ssl"
                 else:
-                    message = cleanse_sensitive_data(
-                        f"Unexpected {err=}, {type(err)=}", [username, password]
-                    )
-                    _LOGGER.error(message)
-                    errors["base"] = "unknown"
-            except BaseException as err:
-                message = cleanse_sensitive_data(
-                    f"Unexpected {err=}, {type(err)=}", [username, password]
-                )
-                _LOGGER.error(message)
+                    errors["base"] = "cannot_connect"
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Unexpected error validating pfSense connection")
                 errors["base"] = "unknown"
 
-        if not user_input:
-            user_input = {}
         schema = vol.Schema(
             {
                 vol.Required(CONF_URL, default=user_input.get(CONF_URL, "")): str,
+                vol.Required(
+                    CONF_API_KEY, default=user_input.get(CONF_API_KEY, "")
+                ): str,
                 vol.Optional(
                     CONF_VERIFY_SSL,
                     default=user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
                 ): bool,
-                vol.Optional(
-                    CONF_USERNAME,
-                    default=user_input.get(CONF_USERNAME, DEFAULT_USERNAME),
-                ): str,
-                vol.Required(
-                    CONF_PASSWORD, default=user_input.get(CONF_PASSWORD, "")
-                ): str,
                 vol.Optional(CONF_NAME, default=user_input.get(CONF_NAME, "")): str,
             }
         )
-
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
     async def async_step_import(self, user_input):
-        """Handle import."""
+        """Handle YAML import."""
         return await self.async_step_user(user_input)
+
+    async def async_step_reauth(self, entry_data):
+        """Triggered when auth fails, or by the v2 -> v3 migration."""
+        self._reauth_entry = self.hass.config_entries.async_get_entry(
+            self.context["entry_id"]
+        )
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(self, user_input=None):
+        """Ask the user for an API key for an existing entry."""
+        errors: dict[str, str] = {}
+        entry = self._reauth_entry
+        assert entry is not None
+
+        if user_input is not None:
+            api_key = user_input[CONF_API_KEY].strip()
+            url = entry.data[CONF_URL]
+            verify_ssl = entry.data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
+            try:
+                system_info = await _validate(self.hass, url, api_key, verify_ssl)
+            except PfSenseAuthError:
+                errors["base"] = "invalid_auth"
+            except PfSensePrivilegeError:
+                errors["base"] = "privilege_missing"
+            except (PfSenseConnectionError, PfSenseNotFoundError):
+                errors["base"] = "cannot_connect"
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Unexpected error during pfSense reauth")
+                errors["base"] = "unknown"
+            else:
+                new_unique_id = slugify(system_info["netgate_device_id"])
+                if entry.unique_id and entry.unique_id != new_unique_id:
+                    return self.async_abort(reason="wrong_device")
+                new_data = {
+                    CONF_URL: url,
+                    CONF_API_KEY: api_key,
+                    CONF_VERIFY_SSL: verify_ssl,
+                }
+                self.hass.config_entries.async_update_entry(entry, data=new_data)
+                await self.hass.config_entries.async_reload(entry.entry_id)
+                return self.async_abort(reason="reauth_successful")
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema({vol.Required(CONF_API_KEY): str}),
+            errors=errors,
+            description_placeholders={"name": entry.title},
+        )
 
     @staticmethod
     @callback
     def async_get_options_flow(config_entry):
-        """Get the options flow for this handler."""
         return OptionsFlowHandler()
 
 
 class OptionsFlowHandler(config_entries.OptionsFlow):
-    """Handle option flow for pfSense."""
+    """Handle the pfSense options flow."""
 
     def __init__(self) -> None:
-        """Initialize options flow."""
-        self.new_options = None
+        self.new_options: dict | None = None
 
     async def async_step_init(self, user_input=None):
-        """Handle options flow."""
         if user_input is not None:
             if user_input.get(CONF_DEVICE_TRACKER_ENABLED):
                 self.new_options = user_input
                 return await self.async_step_device_tracker()
-            else:
-                return self.async_create_entry(title="", data=user_input)
+            return self.async_create_entry(title="", data=user_input)
 
-        scan_interval = self.config_entry.options.get(
-            CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
-        )
-        device_tracker_enabled = self.config_entry.options.get(
-            CONF_DEVICE_TRACKER_ENABLED, DEFAULT_DEVICE_TRACKER_ENABLED
-        )
-        device_tracker_scan_interval = self.config_entry.options.get(
-            CONF_DEVICE_TRACKER_SCAN_INTERVAL, DEFAULT_DEVICE_TRACKER_SCAN_INTERVAL
-        )
-
-        device_tracker_consider_home = self.config_entry.options.get(
-            CONF_DEVICE_TRACKER_CONSIDER_HOME, DEFAULT_DEVICE_TRACKER_CONSIDER_HOME
-        )
-
+        opts = self.config_entry.options
         base_schema = {
-            vol.Optional(CONF_SCAN_INTERVAL, default=scan_interval): vol.All(
-                vol.Coerce(int), vol.Clamp(min=10, max=300)
-            ),
             vol.Optional(
-                CONF_DEVICE_TRACKER_ENABLED, default=device_tracker_enabled
+                CONF_SCAN_INTERVAL,
+                default=opts.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+            ): vol.All(vol.Coerce(int), vol.Clamp(min=10, max=300)),
+            vol.Optional(
+                CONF_DEVICE_TRACKER_ENABLED,
+                default=opts.get(
+                    CONF_DEVICE_TRACKER_ENABLED, DEFAULT_DEVICE_TRACKER_ENABLED
+                ),
             ): bool,
             vol.Optional(
-                CONF_DEVICE_TRACKER_SCAN_INTERVAL, default=device_tracker_scan_interval
+                CONF_DEVICE_TRACKER_SCAN_INTERVAL,
+                default=opts.get(
+                    CONF_DEVICE_TRACKER_SCAN_INTERVAL,
+                    DEFAULT_DEVICE_TRACKER_SCAN_INTERVAL,
+                ),
             ): vol.All(vol.Coerce(int), vol.Clamp(min=30, max=300)),
             vol.Optional(
-                CONF_DEVICE_TRACKER_CONSIDER_HOME, default=device_tracker_consider_home
+                CONF_DEVICE_TRACKER_CONSIDER_HOME,
+                default=opts.get(
+                    CONF_DEVICE_TRACKER_CONSIDER_HOME,
+                    DEFAULT_DEVICE_TRACKER_CONSIDER_HOME,
+                ),
             ): vol.All(vol.Coerce(int), vol.Clamp(min=0, max=600)),
         }
-
         return self.async_show_form(step_id="init", data_schema=vol.Schema(base_schema))
 
     async def async_step_device_tracker(self, user_input=None):
-        """Handle device tracker list step."""
-        url = self.config_entry.data[CONF_URL].strip()
-        username = self.config_entry.data.get(CONF_USERNAME, DEFAULT_USERNAME)
-        password = self.config_entry.data[CONF_PASSWORD]
-        verify_ssl = self.config_entry.data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
-        client = Client(url, username, password, {"verify_ssl": verify_ssl})
-        if user_input is None and (
-            arp_table := await self.hass.async_add_executor_job(
-                client.get_arp_table, True
-            )
-        ):
-            selected_devices = self.config_entry.options.get(CONF_DEVICES, [])
+        """Let the user pick which MACs to track from the live ARP table."""
+        entry = self.config_entry
+        url = entry.data[CONF_URL]
+        api_key = entry.data[CONF_API_KEY]
+        verify_ssl = entry.data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
+        session = async_get_clientsession(self.hass, verify_ssl)
+        client = Client(url, api_key, session, {"verify_ssl": verify_ssl})
 
-            # dicts are ordered so put all previously selected items at the top
-            entries = {}
-            for device in selected_devices:
-                entries[device] = device
-
-            # follow with all arp table entries
-            for entry in arp_table:
-                mac = entry.get("mac-address", "").lower()
-                if len(mac) < 1:
+        if user_input is None and (arp_table := await client.get_arp_table(True)):
+            selected_devices = entry.options.get(CONF_DEVICES, [])
+            entries = {device: device for device in selected_devices}
+            for row in arp_table:
+                mac = (row.get("mac_address") or "").lower()
+                if not mac:
                     continue
-
-                hostname = entry.get("hostname").strip("?")
-                ip = entry.get("ip-address")
-
-                label = f"{mac} - {hostname.strip()} ({ip.strip()})"
-                entries[mac] = label
+                hostname = (row.get("hostname") or "").strip("?").strip()
+                ip = (row.get("ip_address") or "").strip()
+                entries[mac] = f"{mac} - {hostname} ({ip})"
 
             return self.async_show_form(
                 step_id="device_tracker",
@@ -275,10 +263,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     }
                 ),
             )
+
         if user_input:
             self.new_options[CONF_DEVICES] = user_input[CONF_DEVICES]
         return self.async_create_entry(title="", data=self.new_options)
-
-
-class InvalidURL(Exception):
-    """InavlidURL."""
