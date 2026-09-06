@@ -15,8 +15,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
 
       - name: Detect integration
         id: integration
@@ -27,30 +25,21 @@ jobs:
 
           echo "Detected integration: $INTEGRATION"
 
-      - name: Update manifest version
+      - name: Verify manifest version matches the tag
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
           INTEGRATION=${{ steps.integration.outputs.integration }}
-
-          sudo apt-get update
-          sudo apt-get install -y jq
-
           MANIFEST="custom_components/$INTEGRATION/manifest.json"
 
-          tmp=$(mktemp)
+          TAG_VERSION=${GITHUB_REF_NAME#v}
+          MANIFEST_VERSION=$(jq -r '.version' "$MANIFEST")
 
-          jq --arg version "$VERSION" \
-            '.version = $version' \
-            "$MANIFEST" > "$tmp"
+          echo "tag: $GITHUB_REF_NAME  ->  $TAG_VERSION"
+          echo "manifest: $MANIFEST_VERSION"
 
-          mv "$tmp" "$MANIFEST"
-
-      - name: Commit and push changes
-        uses: stefanzweifel/git-auto-commit-action@v7
-        with:
-          commit_message: "Bump manifest version to ${{ github.ref_name }} [skip ci]"
-          file_pattern: "custom_components/**/manifest.json"
-          branch: main
+          if [ "$TAG_VERSION" != "$MANIFEST_VERSION" ]; then
+            echo "::error::Release tag $GITHUB_REF_NAME does not match $MANIFEST version $MANIFEST_VERSION. Bump manifest.json in a commit and tag that commit."
+            exit 1
+          fi
 
       - name: Create ZIP
         run: |
