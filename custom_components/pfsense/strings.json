@@ -4,35 +4,68 @@
     "step": {
       "user": {
         "title": "Connect to the pfSense firewall / router",
+        "description": "Choose how Home Assistant should authenticate to the pfSense REST API. Only one method is used per connection.",
+        "menu_options": {
+          "api_key": "API key",
+          "basic": "Username and password",
+          "jwt": "JWT (from username and password)"
+        }
+      },
+      "api_key": {
+        "title": "pfSense REST API — API key",
         "description": "Enter the base URL of the pfSense REST API (including the port, e.g. {example_url}) and an API key generated at System › REST API › Keys.",
         "data": {
           "url": "URL",
           "api_key": "API key",
-          "name": "Firewall Name",
+          "name": "Firewall name",
+          "verify_ssl": "Verify SSL certificate"
+        }
+      },
+      "basic": {
+        "title": "pfSense REST API — username and password",
+        "description": "Enter the base URL of the pfSense REST API (including the port, e.g. {example_url}) and a pfSense local user's credentials. HTTP Basic authentication must be enabled at System › REST API › Settings.",
+        "data": {
+          "url": "URL",
+          "username": "Username",
+          "password": "Password",
+          "name": "Firewall name",
+          "verify_ssl": "Verify SSL certificate"
+        }
+      },
+      "jwt": {
+        "title": "pfSense REST API — JWT",
+        "description": "Enter the base URL of the pfSense REST API (including the port, e.g. {example_url}) and a pfSense local user's credentials. Home Assistant obtains and refreshes a JWT from them. JWT authentication must be enabled at System › REST API › Settings.",
+        "data": {
+          "url": "URL",
+          "username": "Username",
+          "password": "Password",
+          "name": "Firewall name",
           "verify_ssl": "Verify SSL certificate"
         }
       },
       "reauth_confirm": {
         "title": "Re-authenticate with pfSense",
-        "description": "The pfSense integration now authenticates with a REST API key instead of a password. Enter an API key for {name} (System › REST API › Keys).",
+        "description": "Re-enter the credentials for {name}.",
         "data": {
-          "api_key": "API key"
+          "api_key": "API key",
+          "username": "Username",
+          "password": "Password"
         }
       }
     },
     "error": {
       "cannot_connect": "Failed to connect",
       "cannot_connect_ssl": "SSL failure",
-      "invalid_auth": "Invalid API key",
+      "invalid_auth": "Authentication failed — check the credentials, and that this method is enabled at System › REST API › Settings",
       "invalid_url_format": "Invalid URL format",
-      "privilege_missing": "The API key's user lacks the privileges required for this integration",
+      "privilege_missing": "The account lacks the privileges required for this integration",
       "api_not_found": "REST API not found at that URL - check the address, the port, and that the REST API package is installed",
       "unknown": "Unexpected error"
     },
     "abort": {
       "already_configured": "Device is already configured",
       "reauth_successful": "Re-authentication was successful",
-      "wrong_device": "The API key belongs to a different pfSense device"
+      "wrong_device": "The credentials belong to a different pfSense device"
     }
   },
   "options": {

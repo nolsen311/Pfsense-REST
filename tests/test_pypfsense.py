@@ -1,5 +1,6 @@
 """Unit tests for the async pfSense REST API v2 client."""
 
+import base64
 import re
 
 import aiohttp
@@ -32,9 +33,15 @@ def _envelope(data, code=200, status="ok", response_id="SUCCESS", message=""):
 
 @pytest.fixture
 async def client():
-    """Test helper."""
+    """An api-key client bound to a real aiohttp session."""
     async with aiohttp.ClientSession() as session:
-        yield Client(BASE, "test-key", session, {"verify_ssl": False})
+        yield Client(
+            BASE,
+            session,
+            auth_method="api_key",
+            api_key="test-key",
+            verify_ssl=False,
+        )
 
 
 def test_dict_get():
@@ -48,8 +55,20 @@ def test_dict_get():
 
 def test_base_url_strips_path():
     """Test base url strips path."""
-    c = Client("https://pf.example:8444/ui/", "k", object())
+    c = Client(
+        "https://pf.example:8444/ui/", object(), auth_method="api_key", api_key="k"
+    )
     assert c._base == "https://pf.example:8444/api/v2"
+
+
+def test_missing_credentials_raise():
+    """A method without its credentials fails fast."""
+    with pytest.raises(PfSenseAuthError):
+        Client(BASE, object(), auth_method="api_key")
+    with pytest.raises(PfSenseAuthError):
+        Client(BASE, object(), auth_method="basic", username="u")
+    with pytest.raises(PfSenseAuthError):
+        Client(BASE, object(), auth_method="jwt", password="p")
 
 
 async def test_request_unwraps_data(client):
@@ -86,6 +105,57 @@ async def test_error_codes_map_to_exceptions(client, code, exc):
         )
         with pytest.raises(exc):
             await client._get("/system/hostname")
+
+
+def _last(m, method):
+    for (mthd, _url), reqs in m.requests.items():
+        if mthd == method.upper():
+            return reqs[-1]
+    raise AssertionError(f"no {method} request recorded")
+
+
+_BASIC_UP = "Basic " + base64.b64encode(b"u:p").decode()
+
+
+async def test_basic_auth_sends_authorization_header():
+    """HTTP Basic auth adds an ``Authorization: Basic`` header to every request."""
+    async with aiohttp.ClientSession() as session:
+        c = Client(BASE, session, auth_method="basic", username="u", password="p")
+        with aioresponses() as m:
+            m.get(f"{API}/system/dns", payload=_envelope({"dnsserver": []}))
+            await c.get_dns_servers()
+            assert _last(m, "GET").kwargs["headers"]["Authorization"] == _BASIC_UP
+
+
+async def test_jwt_mints_then_authorizes_with_bearer():
+    """JWT auth mints a token once (with Basic), then sends it as a Bearer."""
+    async with aiohttp.ClientSession() as session:
+        c = Client(BASE, session, auth_method="jwt", username="u", password="p")
+        with aioresponses() as m:
+            m.post(f"{API}/auth/jwt", payload=_envelope({"token": "tok-1"}))
+            m.get(f"{API}/system/dns", payload=_envelope({"dnsserver": []}))
+            await c.get_dns_servers()
+
+            assert _last(m, "POST").kwargs["headers"]["Authorization"] == _BASIC_UP
+            assert _last(m, "GET").kwargs["headers"]["Authorization"] == "Bearer tok-1"
+
+
+async def test_jwt_refreshes_on_401():
+    """An expired JWT (401) is re-minted and the call retried once."""
+    async with aiohttp.ClientSession() as session:
+        c = Client(BASE, session, auth_method="jwt", username="u", password="p")
+        with aioresponses() as m:
+            m.post(f"{API}/auth/jwt", payload=_envelope({"token": "tok-1"}))
+            m.get(
+                f"{API}/system/dns",
+                status=401,
+                payload=_envelope([], code=401, message="expired"),
+            )
+            m.post(f"{API}/auth/jwt", payload=_envelope({"token": "tok-2"}))
+            m.get(f"{API}/system/dns", payload=_envelope({"dnsserver": ["1.1.1.1"]}))
+
+            assert await c.get_dns_servers() == ["1.1.1.1"]
+            assert _last(m, "GET").kwargs["headers"]["Authorization"] == "Bearer tok-2"
 
 
 async def test_get_system_info_merges_endpoints(client):

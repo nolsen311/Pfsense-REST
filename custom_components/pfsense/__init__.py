@@ -25,7 +25,8 @@ from homeassistant.helpers.update_coordinator import (
 )
 
 from .const import (
-    CONF_API_KEY,
+    AUTH_METHOD_API_KEY,
+    CONF_AUTH_METHOD,
     CONF_DEVICE_TRACKER_ENABLED,
     CONF_DEVICE_TRACKER_SCAN_INTERVAL,
     CONF_TLS_INSECURE,
@@ -43,7 +44,12 @@ from .const import (
     SHOULD_RELOAD,
     UNDO_UPDATE_LISTENER,
 )
-from .pypfsense import Client as pfSenseClient, PfSenseAuthError, PfSensePrivilegeError
+from .pypfsense import (
+    Client as pfSenseClient,
+    PfSenseAuthError,
+    PfSensePrivilegeError,
+    client_from_config,
+)
 from .services import ServiceRegistrar
 
 _LOGGER = logging.getLogger(__name__)
@@ -155,17 +161,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     options = entry.options
 
     url = config[CONF_URL]
-    api_key = config.get(CONF_API_KEY)
-    if not api_key:
-        # Migrated-from-password entry that hasn't been re-authed yet.
-        raise ConfigEntryAuthFailed("no pfSense REST API key configured")
     verify_ssl = config.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
     device_tracker_enabled = options.get(
         CONF_DEVICE_TRACKER_ENABLED, DEFAULT_DEVICE_TRACKER_ENABLED
     )
 
     session = async_get_clientsession(hass, verify_ssl)
-    client = pfSenseClient(url, api_key, session, {"verify_ssl": verify_ssl})
+    try:
+        client = client_from_config(url, session, config, verify_ssl)
+    except PfSenseAuthError as err:
+        # Missing credentials (e.g. a half-migrated entry): send the user to
+        # reauth rather than retrying setup forever.
+        raise ConfigEntryAuthFailed(str(err)) from err
     data = PfSenseData(client, entry, hass)
     scan_interval = options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
 
@@ -284,6 +291,8 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     v2 -> v3: XML-RPC username/password auth is gone. Strip the stored password
     and force a reauth so the user can enter a REST API key. The unique id
     (``slugify(netgate id)``) is unchanged, so entities re-attach afterwards.
+    v3 -> v4: stamp ``auth_method`` on entries that predate the multi-method
+    config flow. Every v3 entry used an API key.
     """
     data = dict(config_entry.data)
 
@@ -298,6 +307,10 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         hass.config_entries.async_update_entry(config_entry, data=data, version=3)
         # No API key yet: async_setup_entry raises ConfigEntryAuthFailed, which
         # starts the reauth flow so the user can paste a key.
+
+    if config_entry.version == 3:
+        data.setdefault(CONF_AUTH_METHOD, AUTH_METHOD_API_KEY)
+        hass.config_entries.async_update_entry(config_entry, data=data, version=4)
 
     return True
 

@@ -53,3 +53,6 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: custom_components/${{ steps.integration.outputs.integration }}/${{ steps.integration.outputs.integration }}.zip
+          # Echo the release's current state so attaching the asset can't flip it.
+          prerelease: ${{ github.event.release.prerelease }}
+          draft: ${{ github.event.release.draft }}
