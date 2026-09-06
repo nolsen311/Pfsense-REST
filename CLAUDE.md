@@ -22,9 +22,87 @@ them on hardware that has the feature before shipping that piece:
 - `GET /api/v2/system/packages` shape — no add-on packages installed (it 500s in
   that state, see Firmware section).
 - Whether `DELETE /api/v2/diagnostics/arp_table/entry` accepts an IP string for `id`.
-- Whether `DELETE /api/v2/firewall/states` supports a usable source/dest filter.
 
-No integration code has been rewritten yet — this document is the deliverable.
+Resolved on hardware since the first draft — see "Findings from live hardware" below:
+`DELETE /api/v2/firewall/states` source/dest filtering; the `disabled` field on
+GUI-authored rules; `PATCH /firewall/rule` and empty `statetype`.
+
+The integration has since been rewritten and shipped (see repo history through
+`v0.10.0`); this document is kept as the reference for pfRest behaviour.
+
+## Findings from live hardware
+
+Discovered running the shipped integration against the live Netgate 6100
+(26.07-RELEASE, pfRest v2.10.2). These are pfRest behaviours, not integration
+bugs, and matter to anyone touching the same endpoints.
+
+### `disabled` is wrong for rules disabled in the pfSense web UI
+
+`GET /api/v2/firewall/rules` (and the NAT list endpoints) return
+`"disabled": false` for **every rule that was disabled through the pfSense
+webConfigurator**, even though the GUI shows them disabled and pf is not loading
+them. Confirmed against a rule whose `config.xml` literally contains
+`<disabled></disabled>`.
+
+Cause: pfRest models `disabled` as a `BooleanField` with the default
+`indicates_true: ''`, and `BooleanField::_from_internal()` does a **strict**
+`$internal_value === $this->indicates_true` comparison. pfSense's own GUI writes
+the content-less element `<disabled></disabled>`, which pfSense's XML parser
+loads as an empty array (not `''`), so `[] === ''` is false and pfRest reports
+`false`. Rules disabled **through the REST API** store pfRest's own `''` token
+and round-trip correctly.
+
+Consequence: `is_on = not rule.get("disabled")` is correct code fed bad data —
+GUI-disabled rules show as ON in Home Assistant. There is no clean client-side
+fix; the API genuinely does not expose the real state for these rules. Report
+upstream (https://github.com/pfrest/pfSense-pkg-RESTAPI) and/or check for a newer
+package. `git blame` the `disabled` handling before assuming the integration is
+at fault.
+
+### `PATCH /firewall/rule` rejects a blank `statetype`
+
+`PATCH /api/v2/firewall/rule {"id": N, "disabled": <bool>}` returns
+`400 FIELD_EMPTY_NOT_ALLOWED: Field 'statetype' cannot be empty` for any rule
+whose `statetype` is `""` in the config — again, the GUI writes
+`<statetype></statetype>` for some rules (mostly `block`/`reject`). pfRest
+re-validates the **whole** object on a PATCH, so an unrelated toggle fails.
+
+Same root cause family: `statetype` is a `StringField(default: 'keep state',
+choices: [...])` with no `allow_empty`, and `''` is present-but-invalid so the
+default never applies.
+
+Workaround shipped in the client (`_set_rule_disabled` /
+`_RULE_REQUIRED_DEFAULTS`): when the rule's `statetype` is falsy, include
+`"statetype": "keep state"` (pfSense's own default, a behavioural no-op) in the
+PATCH body. Extend the table if other empty-but-required fields surface.
+
+### `DELETE /api/v2/firewall/states` — the filter works
+
+The earlier LIVE-CHECK is resolved. The **prefix** filter is reliable:
+
+- `DELETE /api/v2/firewall/states?source__startswith=<prefix>` and
+  `?destination__startswith=<prefix>` both delete the matching states.
+  State endpoints render as `ip:port` (IPv4), so a host is `"10.1.1.1:"` and an
+  octet-aligned network is its leading octets plus a dot (`"10.0.10."`).
+- `limit=0` means "no limit" for both GET and DELETE — a single call deletes
+  **every** matching state, no per-call cap. (`limit=100000` behaves
+  pathologically; use `0`.)
+- The DELETE response `data` is the list of deleted state objects, so `len(data)`
+  is the deleted count.
+- Not usable for non-octet-aligned CIDRs (e.g. `/25`) or IPv6 via `startswith`;
+  the shipped `kill_states_for_rule` skips those rather than shelling out.
+- Exact-match query params (`source=<ip>`) did **not** work with a bare IP; only
+  the `__startswith` / `__contains` operators matched.
+
+### Aside: HACS "no update available"
+
+If a release goes unnoticed by HACS, check for a **version regression** — HACS
+compares versions semantically and treats a lower `manifest.json` / tag as a
+downgrade. This fork's manifest was briefly at `3.0.0` before the first `0.9.x`
+tags existed; anyone whose HACS recorded `2.x`/`3.x` must remove and re-add the
+integration. Keep the tag, `manifest.json`, and shipped content in lockstep
+(see `.github/workflows/release.yml`, which now *verifies* tag == manifest
+rather than rewriting the manifest after the tag).
 
 ## Target environment (confirmed)
 
@@ -250,6 +328,12 @@ The methods the integration actually calls, and their REST replacements:
   `nat/outbound/mapping`. **`PATCH` takes no `?apply=` param — the separate apply
   call is mandatory.** Server-side `query[...]` filtering was unreliable in
   testing (returned unfiltered results); keep finding rules client-side.
+- **`disabled` is unreliable on read** — pfRest reports `false` for rules
+  disabled via the pfSense GUI (see "Findings from live hardware"). `is_on`
+  looks backwards for those rules and there is no client-side fix.
+- **`statetype` gotcha on write** — a bare `{"id", "disabled"}` PATCH 400s with
+  `FIELD_EMPTY_NOT_ALLOWED` on rules whose `statetype` is blank; the client
+  backfills `"statetype": "keep state"`. Same section.
 
 ### Aliases
 
@@ -277,13 +361,15 @@ The methods the integration actually calls, and their REST replacements:
 
 ### State table
 
-- `reset_state_table()` → `DELETE /api/v2/firewall/states` (no query). Default
-  `limit` is 100 — pass a large `limit` or loop until empty, **or** use
-  `command_prompt` with `pfctl -F states` for exact parity.
-- `kill_states(source, destination)` →
-  `DELETE /api/v2/firewall/states?query[...]` — **LIVE-CHECK** the queryable
-  field names (`src` / `dst`?). Fallback that matches current behaviour:
-  `command_prompt` with `pfctl -k <source> [-k <destination>]`.
+- `reset_state_table()` → `DELETE /api/v2/firewall/states` — pass **`limit=0`**
+  ("no limit"; a single call clears everything). The default page is 100.
+- `kill_states(source, destination)` — still uses `pfctl -k` via
+  `command_prompt` (the client keeps this for the service). For the
+  rule-switch state reset, `kill_states_for_rule` instead uses
+  `DELETE /api/v2/firewall/states?{source,destination}__startswith=<prefix>`
+  with `limit=0` — the prefix filter is confirmed working on hardware (see
+  "Findings from live hardware"). `startswith` can't express `/25`-style
+  networks or IPv6, which that path deliberately skips.
 
 ### System control
 
