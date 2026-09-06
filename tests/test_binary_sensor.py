@@ -3,20 +3,22 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from homeassistant.const import CONF_URL, CONF_VERIFY_SSL
-from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.pfsense.const import CONF_API_KEY, COORDINATOR, DOMAIN
+from homeassistant.const import CONF_URL, CONF_VERIFY_SSL
+from homeassistant.core import HomeAssistant
 
 
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(enable_custom_integrations):
-    yield
+    """Test helper."""
+    return
 
 
 @pytest.fixture
 def mock_pfsense_client():
+    """Test helper."""
     client = AsyncMock()
     client.get_system_info.return_value = {
         "hostname": "router",
@@ -70,9 +72,7 @@ def _entry(entry_id):
 async def _setup(hass, entry, client):
     entry.add_to_hass(hass)
     with (
-        patch(
-            "custom_components.pfsense.pfSenseClient", return_value=client
-        ),
+        patch("custom_components.pfsense.pfSenseClient", return_value=client),
         patch("custom_components.pfsense.async_load_cache", return_value=None),
         patch("custom_components.pfsense.async_save_cache"),
     ):
@@ -82,20 +82,20 @@ async def _setup(hass, entry, client):
 
 @pytest.mark.asyncio
 async def test_carp_sensor_on(hass: HomeAssistant, mock_pfsense_client):
+    """Test carp sensor on."""
     mock_pfsense_client.get_carp_status.return_value = True
     await _setup(hass, _entry("carp_on"), mock_pfsense_client)
 
     coordinator = hass.data[DOMAIN]["carp_on"][COORDINATOR]
     assert coordinator.data["carp_status"] is True
     # Notices have no REST endpoint; that binary sensor no longer exists.
-    assert (
-        hass.states.get("binary_sensor.router_local_pending_notices_present") is None
-    )
+    assert hass.states.get("binary_sensor.router_local_pending_notices_present") is None
     assert hass.states.get("binary_sensor.router_local_carp_status") is not None
 
 
 @pytest.mark.asyncio
 async def test_carp_sensor_off(hass: HomeAssistant, mock_pfsense_client):
+    """Test carp sensor off."""
     mock_pfsense_client.get_carp_status.return_value = False
     await _setup(hass, _entry("carp_off"), mock_pfsense_client)
 

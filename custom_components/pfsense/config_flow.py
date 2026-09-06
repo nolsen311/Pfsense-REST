@@ -5,18 +5,14 @@ from __future__ import annotations
 import logging
 from urllib.parse import urlparse
 
+import voluptuous as vol
+
 from homeassistant import config_entries
-from homeassistant.const import (
-    CONF_NAME,
-    CONF_SCAN_INTERVAL,
-    CONF_URL,
-    CONF_VERIFY_SSL,
-)
+from homeassistant.const import CONF_NAME, CONF_SCAN_INTERVAL, CONF_URL, CONF_VERIFY_SSL
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import homeassistant.helpers.config_validation as cv
 from homeassistant.util import slugify
-import voluptuous as vol
 
 from .const import (
     CONF_API_KEY,
@@ -69,6 +65,7 @@ class ConfigFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 3
 
     def __init__(self) -> None:
+        """Initialize the flow state."""
         self._reauth_entry: config_entries.ConfigEntry | None = None
 
     async def async_step_user(self, user_input=None):
@@ -116,7 +113,7 @@ class ConfigFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "cannot_connect_ssl"
                 else:
                     errors["base"] = "cannot_connect"
-            except Exception:  # noqa: BLE001
+            except Exception:
                 _LOGGER.exception("Unexpected error validating pfSense connection")
                 errors["base"] = "unknown"
 
@@ -169,7 +166,7 @@ class ConfigFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "privilege_missing"
             except (PfSenseConnectionError, PfSenseNotFoundError):
                 errors["base"] = "cannot_connect"
-            except Exception:  # noqa: BLE001
+            except Exception:
                 _LOGGER.exception("Unexpected error during pfSense reauth")
                 errors["base"] = "unknown"
             else:
@@ -195,6 +192,7 @@ class ConfigFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(config_entry):
+        """Return the options flow handler."""
         return OptionsFlowHandler()
 
 
@@ -202,9 +200,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     """Handle the pfSense options flow."""
 
     def __init__(self) -> None:
+        """Initialize the object."""
         self.new_options: dict | None = None
 
     async def async_step_init(self, user_input=None):
+        """Handle the options form."""
         if user_input is not None:
             if user_input.get(CONF_DEVICE_TRACKER_ENABLED):
                 self.new_options = user_input

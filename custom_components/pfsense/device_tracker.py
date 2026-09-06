@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import logging
 import time
-from typing import Any, Mapping
+from typing import Any
+
+from mac_vendor_lookup import AsyncMacLookup
 
 from homeassistant.components.device_tracker import SourceType
 from homeassistant.components.device_tracker.config_entry import ScannerEntity
@@ -18,7 +21,6 @@ from homeassistant.helpers.device_registry import (
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import slugify
-from mac_vendor_lookup import AsyncMacLookup
 
 from . import CoordinatorEntityManager, PfSenseEntity, dict_get
 from .const import (
@@ -35,6 +37,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def lookup_mac(mac_vendor_lookup: AsyncMacLookup, mac: str) -> str:
+    """Return the OUI vendor string for a MAC address."""
     mac = mac_vendor_lookup.sanitise(mac)
     if isinstance(mac, str):
         mac = mac.encode("utf8")
@@ -55,11 +58,11 @@ async def async_setup_entry(
     mac_vendor_lookup = AsyncMacLookup()
     try:
         await mac_vendor_lookup.update_vendors()
-    except Exception:
+    except Exception:  # noqa: BLE001 - OUI lookup is optional
         try:
             await mac_vendor_lookup.load_vendors()
-        except Exception:
-            pass
+        except Exception as err:  # noqa: BLE001 - continue without vendors
+            _LOGGER.debug("MAC vendor database unavailable: %s", err)
 
     dev_reg = async_get_dev_reg(hass)
 
@@ -86,24 +89,23 @@ async def async_setup_entry(
         if configured_mac_addresses:
             mac_addresses = configured_mac_addresses
             enabled_default = True
-        else:
-            if device_per_arp_entry:
-                arp_entries = dict_get(state, "arp_table")
-                if not arp_entries:
-                    return []
+        elif device_per_arp_entry:
+            arp_entries = dict_get(state, "arp_table")
+            if not arp_entries:
+                return []
 
-                mac_addresses = [
-                    mac_address.lower()
-                    for arp_entry in arp_entries
-                    if (mac_address := arp_entry.get("mac_address"))
-                ]
+            mac_addresses = [
+                mac_address.lower()
+                for arp_entry in arp_entries
+                if (mac_address := arp_entry.get("mac_address"))
+            ]
 
         for mac_address in mac_addresses:
             mac_vendor = None
             try:
                 mac_vendor = lookup_mac(mac_vendor_lookup, mac_address)
-            except Exception:
-                pass
+            except Exception as err:  # noqa: BLE001 - unknown OUI, leave vendor unset
+                _LOGGER.debug("MAC vendor lookup failed for %s: %s", mac_address, err)
 
             entity = PfSenseScannerEntity(
                 hass,
@@ -183,6 +185,7 @@ class PfSenseScannerEntity(PfSenseEntity, ScannerEntity):
 
     @property
     def available(self) -> bool:
+        """Return whether the entity is available."""
         state = self.coordinator.data
         arp_table = dict_get(state, "arp_table")
         if arp_table is None:
@@ -204,8 +207,8 @@ class PfSenseScannerEntity(PfSenseEntity, ScannerEntity):
         """Return extra state attributes."""
         entry = self._get_pfsense_arp_entry()
         if entry is not None:
-            for property in ["interface", "expires", "type"]:
-                self._extra_state[property] = entry.get(property)
+            for prop in ["interface", "expires", "type"]:
+                self._extra_state[prop] = entry.get(prop)
 
         if self._last_known_hostname is not None:
             self._extra_state["last_known_hostname"] = self._last_known_hostname
@@ -280,7 +283,7 @@ class PfSenseScannerEntity(PfSenseEntity, ScannerEntity):
         """Return device icon."""
         try:
             return "mdi:lan-connect" if self.is_connected else "mdi:lan-disconnect"
-        except Exception:
+        except (KeyError, TypeError):
             return "mdi:lan-disconnect"
 
     @property

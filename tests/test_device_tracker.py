@@ -1,3 +1,5 @@
+"""Tests for the pfSense device tracker."""
+
 from unittest.mock import MagicMock
 
 from custom_components.pfsense.device_tracker import lookup_mac

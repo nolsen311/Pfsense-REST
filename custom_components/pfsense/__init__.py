@@ -1,32 +1,28 @@
-"""Support for pfSense REST API"""
+"""Support for the pfSense REST API integration."""
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 import copy
 from datetime import timedelta
 import logging
 import re
 import time
-from typing import Callable
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
-    CONF_SCAN_INTERVAL,
-    CONF_URL,
-    CONF_VERIFY_SSL,
-)
+from homeassistant.const import CONF_SCAN_INTERVAL, CONF_URL, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
     UpdateFailed,
 )
-from homeassistant.helpers.storage import Store
 
 from .const import (
     CONF_API_KEY,
@@ -47,8 +43,7 @@ from .const import (
     SHOULD_RELOAD,
     UNDO_UPDATE_LISTENER,
 )
-from .pypfsense import Client as pfSenseClient
-from .pypfsense import PfSenseAuthError, PfSensePrivilegeError
+from .pypfsense import Client as pfSenseClient, PfSenseAuthError, PfSensePrivilegeError
 from .services import ServiceRegistrar
 
 _LOGGER = logging.getLogger(__name__)
@@ -62,8 +57,8 @@ async def async_save_cache(hass: HomeAssistant, entry_id: str, data: dict):
     store = Store(hass, STORAGE_VERSION, f"{DOMAIN}_{entry_id}_cache")
     try:
         await store.async_save(data)
-    except Exception as e:
-        _LOGGER.error(f"Failed to save pfSense cache: {e}")
+    except (OSError, HomeAssistantError, ValueError) as err:
+        _LOGGER.error("Failed to save pfSense cache: %s", err)
 
 
 async def async_load_cache(hass: HomeAssistant, entry_id: str):
@@ -71,8 +66,8 @@ async def async_load_cache(hass: HomeAssistant, entry_id: str):
     store = Store(hass, STORAGE_VERSION, f"{DOMAIN}_{entry_id}_cache")
     try:
         return await store.async_load()
-    except Exception as e:
-        _LOGGER.error(f"Failed to load pfSense cache: {e}")
+    except (OSError, HomeAssistantError, ValueError) as err:
+        _LOGGER.error("Failed to load pfSense cache: %s", err)
         return None
 
 
@@ -80,15 +75,14 @@ async def async_load_cache(hass: HomeAssistant, entry_id: str):
 
 
 def dict_get(data: dict, path: str, default=None):
-    pathList = re.split(r"\.", path, flags=re.IGNORECASE)
+    """Traverse a nested dict/list by a dotted path; numeric segments index lists."""
     result = data
-    for key in pathList:
-        try:
+    try:
+        for key in re.split(r"\.", path, flags=re.IGNORECASE):
             key = int(key) if key.isnumeric() else key
             result = result[key]
-        except Exception:
-            result = default
-            break
+    except (KeyError, IndexError, TypeError):
+        return default
     return result
 
 
@@ -124,11 +118,11 @@ def _compute_interface_rates(new_state, elapsed_time, scan_interval):
                 label, value = "kilobytes_per_second", rate / 1000
             new_property = f"{prop}_{label}"
             if elapsed_time >= scan_interval:
-                interface[new_property] = int(round(value))
+                interface[new_property] = round(value)
             else:
                 previous_value = previous_interface.get(new_property)
-                interface[new_property] = int(
-                    round(previous_value if previous_value is not None else value)
+                interface[new_property] = round(
+                    previous_value if previous_value is not None else value
                 )
 
 
@@ -144,7 +138,7 @@ def _compute_openvpn_rates(new_state, elapsed_time):
         for prop in ("total_bytes_recv", "total_bytes_sent"):
             change = abs(server.get(prop, 0) - previous_server.get(prop, 0))
             rate = change / elapsed_time if elapsed_time > 0 else 0
-            server[f"{prop}_kilobytes_per_second"] = int(round(rate / 1000))
+            server[f"{prop}_kilobytes_per_second"] = round(rate / 1000)
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry):
@@ -177,24 +171,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     async def async_update_data():
         """Fetch data from pfSense, falling back to the on-disk cache on failure."""
+        new_state = None
         try:
             async with asyncio.timeout(scan_interval - 1):
                 new_state = await data.update()
-            if not new_state:
-                raise UpdateFailed("no data received from pfSense")
-            await async_save_cache(hass, entry.entry_id, new_state)
-            return new_state
         except (PfSenseAuthError, PfSensePrivilegeError) as err:
             raise ConfigEntryAuthFailed(str(err)) from err
-        except Exception as err:
+        except Exception:
             _LOGGER.warning(
-                "pfSense poll failed (%s); trying the local cache", err
+                "pfSense poll failed; trying the local cache", exc_info=True
             )
-            cached_data = await async_load_cache(hass, entry.entry_id)
-            if cached_data:
-                data._state = cached_data
-                return cached_data
-            raise UpdateFailed(f"poll failed and no cache available: {err}")
+        else:
+            if new_state:
+                await async_save_cache(hass, entry.entry_id, new_state)
+                return new_state
+
+        cached_data = await async_load_cache(hass, entry.entry_id)
+        if cached_data:
+            data.restore_state(cached_data)
+            return cached_data
+        raise UpdateFailed("pfSense poll failed and no usable cache is available")
 
     coordinator = DataUpdateCoordinator(
         hass,
@@ -216,21 +212,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
         async def async_update_device_tracker_data():
             """Fetch the ARP table from pfSense."""
+            new_dt_state = None
             try:
                 async with asyncio.timeout(device_tracker_scan_interval - 1):
                     new_dt_state = await device_tracker_data.update(
                         {"scope": "device_tracker"}
                     )
-                if not new_dt_state:
-                    raise UpdateFailed("no device tracker data received")
-                return new_dt_state
             except (PfSenseAuthError, PfSensePrivilegeError) as err:
                 raise ConfigEntryAuthFailed(str(err)) from err
-            except Exception as err:
-                _LOGGER.warning("pfSense device tracker update failed: %s", err)
-                if device_tracker_data._state:
-                    return device_tracker_data._state
-                raise UpdateFailed(err)
+            except Exception:
+                _LOGGER.warning("pfSense device tracker update failed", exc_info=True)
+            else:
+                if new_dt_state:
+                    return new_dt_state
+
+            if device_tracker_data.state:
+                return device_tracker_data.state
+            raise UpdateFailed("pfSense device tracker update failed")
 
         device_tracker_coordinator = DataUpdateCoordinator(
             hass,
@@ -303,6 +301,8 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 
 
 class PfSenseData:
+    """Fetches and holds the pfSense poll state for a config entry."""
+
     def __init__(
         self, client: pfSenseClient, config_entry: ConfigEntry, hass: HomeAssistant
     ):
@@ -315,7 +315,12 @@ class PfSenseData:
 
     @property
     def state(self):
+        """Return the most recently fetched (or restored) poll state."""
         return self._state
+
+    def restore_state(self, state: dict) -> None:
+        """Adopt a state dict loaded from the on-disk cache."""
+        self._state = state
 
     async def update(self, opts=None):
         """Fetch the latest state from pfSense over the REST API."""
@@ -420,6 +425,7 @@ class CoordinatorEntityManager:
         process_entities_callback: Callable,
         async_add_entities: AddEntitiesCallback,
     ) -> None:
+        """Initialize the data holder."""
         self.hass = hass
         self.coordinator = coordinator
         self.config_entry = config_entry
@@ -434,6 +440,7 @@ class CoordinatorEntityManager:
 
     @callback
     def process_entities(self):
+        """Build entities from the current coordinator data and add new ones."""
         entities = self.process_entities_callback(self.hass, self.config_entry)
         new_entities = []
 
@@ -447,14 +454,16 @@ class CoordinatorEntityManager:
 
 
 class PfSenseEntity(CoordinatorEntity, RestoreEntity):
-    """base entity for pfSense"""
+    """Base entity for pfSense."""
 
     @property
     def coordinator_context(self):
+        """Return the coordinator context."""
         return None
 
     @property
     def device_info(self):
+        """Return device registry information."""
         state = self.coordinator.data
         if not state or "host_firmware_version" not in state:
             return None
@@ -470,12 +479,14 @@ class PfSenseEntity(CoordinatorEntity, RestoreEntity):
 
     @property
     def pfsense_device_name(self):
+        """Return the pfsense device name."""
         if self.config_entry.title:
             return self.config_entry.title
         return f"{self._get_pfsense_state_value('system_info.hostname')}.{self._get_pfsense_state_value('system_info.domain')}"
 
     @property
     def pfsense_device_unique_id(self):
+        """Return the pfsense device unique id."""
         return self._get_pfsense_state_value("system_info.netgate_device_id")
 
     def _get_pfsense_state_value(self, path, default=None):
@@ -487,19 +498,22 @@ class PfSenseEntity(CoordinatorEntity, RestoreEntity):
     async def service_start_service(
         self, service_name: str, service: dict | str | None = None
     ):
+        """Handle the pfsense.start_service service call."""
         await self._get_pfsense_client().start_service(service_name, service)
 
     async def service_stop_service(
         self, service_name: str, service: dict | str | None = None
     ):
+        """Handle the pfsense.stop_service service call."""
         await self._get_pfsense_client().stop_service(service_name, service)
 
     async def service_restart_service(
         self,
         service_name: str,
-        only_if_running: int | str | None | bool = False,
+        only_if_running: int | str | bool | None = False,
         service: dict | str | None = None,
     ):
+        """Handle the pfsense.restart_service service call."""
         client = self._get_pfsense_client()
         if str(only_if_running).lower() in ["true", "1"]:
             await client.restart_service_if_running(service_name, service)
@@ -507,22 +521,29 @@ class PfSenseEntity(CoordinatorEntity, RestoreEntity):
             await client.restart_service(service_name, service)
 
     async def service_reset_state_table(self):
+        """Handle the pfsense.reset_state_table service call."""
         await self._get_pfsense_client().reset_state_table()
 
-    async def service_kill_states(self, source: str, destination: str = None):
+    async def service_kill_states(self, source: str, destination: str | None = None):
+        """Handle the pfsense.kill_states service call."""
         await self._get_pfsense_client().kill_states(source, destination)
 
     async def service_system_halt(self):
+        """Handle the pfsense.system_halt service call."""
         await self._get_pfsense_client().system_halt()
 
     async def service_system_reboot(self):
+        """Handle the pfsense.system_reboot service call."""
         await self._get_pfsense_client().system_reboot()
 
     async def service_send_wol(self, interface: str, mac: str):
+        """Handle the pfsense.send_wol service call."""
         await self._get_pfsense_client().send_wol(interface, mac)
 
     async def service_set_default_gateway(self, gateway: str, ip_version: str):
+        """Handle the pfsense.set_default_gateway service call."""
         await self._get_pfsense_client().set_default_gateway(gateway, ip_version)
 
     async def service_exec_command(self, command: str, background: bool = False):
+        """Handle the pfsense.exec_command service call."""
         await self._get_pfsense_client().exec_command(command, background)

@@ -13,10 +13,11 @@ The response envelope for every endpoint is::
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import ipaddress
 import logging
 import re
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import urlparse
 
 import aiohttp
@@ -30,12 +31,12 @@ API_BASE = "/api/v2"
 def dict_get(data: dict, path: str, default=None):
     """Traverse a nested dict/list by a dotted path. Numeric segments index lists."""
     result = data
-    for key in re.split(r"\.", path):
-        try:
+    try:
+        for key in re.split(r"\.", path):
             key = int(key) if key.isnumeric() else key
             result = result[key]
-        except (KeyError, IndexError, TypeError):
-            return default
+    except (KeyError, IndexError, TypeError):
+        return default
     return result
 
 
@@ -63,6 +64,7 @@ class PfSenseAPIError(PfSenseError):
     """Any other non-2xx response. Carries ``code`` / ``response_id`` / ``message``."""
 
     def __init__(self, code: int, response_id: str, message: str) -> None:
+        """Store the HTTP code, machine response id and human message."""
         self.code = code
         self.response_id = response_id
         self.message = message
@@ -95,6 +97,7 @@ class Client:
         session: aiohttp.ClientSession,
         opts: dict | None = None,
     ) -> None:
+        """Store the base URL, API key, aiohttp session and options."""
         opts = opts or {}
         parts = urlparse(url.rstrip("/"))
         self._base = f"{parts.scheme}://{parts.netloc}{API_BASE}"
@@ -163,7 +166,7 @@ class Client:
     # -------------------------------------------------------------- identity
 
     async def get_system_info(self) -> dict:
-        """hostname / domain / serial / netgate id / platform, old-client shape."""
+        """Hostname / domain / serial / netgate id / platform, old-client shape."""
         status, hostname = await asyncio.gather(
             self._get("/status/system"),
             self._get("/system/hostname"),
@@ -199,6 +202,7 @@ class Client:
         return None
 
     async def get_dns_servers(self) -> list[str]:
+        """Return the configured system DNS servers."""
         data = await self._get("/system/dns")
         return data.get("dnsserver", []) if isinstance(data, dict) else []
 
@@ -211,14 +215,18 @@ class Client:
         ``interfaces.{name}.{counter}``, ``gateways.{name}.{prop}``,
         ``openvpn.servers.{vpnid}.{prop}``, ``cpu.*``, ``system.*``, ``wan_ip``.
         """
-        system, interfaces, gateways, ovpn_servers, gateways_detail = (
-            await asyncio.gather(
-                self._get("/status/system"),
-                self._get("/status/interfaces"),
-                self._get("/status/gateways"),
-                self._get("/status/openvpn/servers"),
-                self.get_gateways_detail(),
-            )
+        (
+            system,
+            interfaces,
+            gateways,
+            ovpn_servers,
+            gateways_detail,
+        ) = await asyncio.gather(
+            self._get("/status/system"),
+            self._get("/status/interfaces"),
+            self._get("/status/gateways"),
+            self._get("/status/openvpn/servers"),
+            self.get_gateways_detail(),
         )
         return _build_telemetry(
             system, interfaces, gateways, ovpn_servers, gateways_detail
@@ -227,6 +235,7 @@ class Client:
     # ------------------------------------------------------------- services
 
     async def get_services(self) -> list[dict]:
+        """Return the list of pfSense services and their status."""
         data = await self._get("/status/services")
         return data or []
 
@@ -243,13 +252,19 @@ class Client:
                 return svc
         return None
 
-    async def start_service(self, service_name: str, service: dict | None = None) -> None:
+    async def start_service(
+        self, service_name: str, service: dict | None = None
+    ) -> None:
+        """Start a pfSense service by name."""
         svc = service if isinstance(service, dict) and "id" in service else None
         svc = svc or await self._find_service(service_name)
         if svc:
             await self._service_action(svc, "start")
 
-    async def stop_service(self, service_name: str, service: dict | None = None) -> None:
+    async def stop_service(
+        self, service_name: str, service: dict | None = None
+    ) -> None:
+        """Stop a pfSense service by name."""
         svc = service if isinstance(service, dict) and "id" in service else None
         svc = svc or await self._find_service(service_name)
         if svc:
@@ -258,6 +273,7 @@ class Client:
     async def restart_service(
         self, service_name: str, service: dict | None = None
     ) -> None:
+        """Restart a pfSense service by name."""
         svc = service if isinstance(service, dict) and "id" in service else None
         svc = svc or await self._find_service(service_name)
         if svc:
@@ -266,6 +282,7 @@ class Client:
     async def restart_service_if_running(
         self, service_name: str, service: dict | None = None
     ) -> None:
+        """Restart a pfSense service only if it is currently running."""
         svc = service if isinstance(service, dict) and "id" in service else None
         svc = svc or await self._find_service(service_name)
         if svc and svc.get("status"):
@@ -274,16 +291,19 @@ class Client:
     # ---------------------------------------------------------------- dhcp
 
     async def get_dhcp_leases(self, dns_lookups=None) -> list[dict]:
+        """Return the current DHCP leases."""
         data = await self._get("/status/dhcp_server/leases")
         return data or []
 
     # ----------------------------------------------------------------- arp
 
     async def get_arp_table(self, resolve_hostnames: bool = False) -> list[dict]:
+        """Return the ARP table entries."""
         data = await self._get("/diagnostics/arp_table")
         return data or []
 
     async def delete_arp_entry(self, ip: str) -> None:
+        """Delete the ARP entry for an IP address."""
         if not ip:
             return
         entry_id: Any = ip
@@ -292,12 +312,10 @@ class Client:
             if entry.get("ip_address") == ip:
                 entry_id = entry.get("id", ip)
                 break
-        try:
+        with contextlib.suppress(PfSenseNotFoundError):
             await self._request(
                 "DELETE", "/diagnostics/arp_table/entry", params={"id": entry_id}
             )
-        except PfSenseNotFoundError:
-            pass
 
     # ------------------------------------------------------------ gateways
 
@@ -323,6 +341,7 @@ class Client:
         return out
 
     async def set_default_gateway(self, gateway: str, ip_version: str = "4") -> None:
+        """Set the default IPv4 or IPv6 gateway and apply routing."""
         key = "defaultgw6" if "6" in str(ip_version) else "defaultgw4"
         async with self._write_lock:
             await self._request(
@@ -333,14 +352,17 @@ class Client:
     # -------------------------------------------------------- firewall rules
 
     async def get_filter_rules(self) -> list[dict]:
+        """Return the firewall filter rules."""
         data = await self._get("/firewall/rules")
         return data or []
 
     async def get_nat_port_forward_rules(self) -> list[dict]:
+        """Return the NAT port-forward rules."""
         data = await self._get("/firewall/nat/port_forwards")
         return data or []
 
     async def get_nat_outbound_rules(self) -> list[dict]:
+        """Return the NAT outbound mappings."""
         data = await self._get("/firewall/nat/outbound/mappings")
         return data or []
 
@@ -350,7 +372,7 @@ class Client:
     # fields make an otherwise unrelated toggle fail with
     # ``FIELD_EMPTY_NOT_ALLOWED``. Re-send them with the value pfSense would
     # have defaulted to, which is a no-op for the rule's behaviour.
-    _RULE_REQUIRED_DEFAULTS = {
+    _RULE_REQUIRED_DEFAULTS: ClassVar[dict[str, dict[str, str]]] = {
         "/firewall/rule": {"statetype": "keep state"},
     }
 
@@ -363,25 +385,34 @@ class Client:
             if bool(rule.get("disabled")) == disabled:
                 return
             payload = {"id": rule["id"], "disabled": disabled}
-            for field, fallback in self._RULE_REQUIRED_DEFAULTS.get(path, {}).items():
-                if not rule.get(field):
-                    payload[field] = fallback
+            payload.update(
+                {
+                    field: fallback
+                    for field, fallback in self._RULE_REQUIRED_DEFAULTS.get(
+                        path, {}
+                    ).items()
+                    if not rule.get(field)
+                }
+            )
             async with self._write_lock:
                 await self._request("PATCH", path, payload=payload)
                 await self._apply("firewall")
             return
 
     async def enable_filter_rule_by_tracker(self, tracker) -> None:
+        """Enable the firewall rule with the given tracker id."""
         await self._set_rule_disabled(
             "/firewall/rule", await self.get_filter_rules(), "tracker", tracker, False
         )
 
     async def disable_filter_rule_by_tracker(self, tracker) -> None:
+        """Disable the firewall rule with the given tracker id."""
         await self._set_rule_disabled(
             "/firewall/rule", await self.get_filter_rules(), "tracker", tracker, True
         )
 
     async def enable_nat_port_forward_rule_by_created_time(self, created_time) -> None:
+        """Enable the NAT port-forward rule with the given created_time."""
         await self._set_rule_disabled(
             "/firewall/nat/port_forward",
             await self.get_nat_port_forward_rules(),
@@ -391,6 +422,7 @@ class Client:
         )
 
     async def disable_nat_port_forward_rule_by_created_time(self, created_time) -> None:
+        """Disable the NAT port-forward rule with the given created_time."""
         await self._set_rule_disabled(
             "/firewall/nat/port_forward",
             await self.get_nat_port_forward_rules(),
@@ -400,6 +432,7 @@ class Client:
         )
 
     async def enable_nat_outbound_rule_by_created_time(self, created_time) -> None:
+        """Enable the NAT outbound mapping with the given created_time."""
         await self._set_rule_disabled(
             "/firewall/nat/outbound/mapping",
             await self.get_nat_outbound_rules(),
@@ -409,6 +442,7 @@ class Client:
         )
 
     async def disable_nat_outbound_rule_by_created_time(self, created_time) -> None:
+        """Disable the NAT outbound mapping with the given created_time."""
         await self._set_rule_disabled(
             "/firewall/nat/outbound/mapping",
             await self.get_nat_outbound_rules(),
@@ -426,6 +460,7 @@ class Client:
         action: str = "add",
         kill_states: bool = True,
     ) -> None:
+        """Add or remove an address in a firewall alias and apply."""
         aliases = await self._get("/firewall/aliases") or []
         target = next((a for a in aliases if a.get("name") == alias_name), None)
 
@@ -477,12 +512,14 @@ class Client:
     # ----------------------------------------------------------- carp / vip
 
     async def get_carp_status(self) -> bool:
+        """Return True when CARP is enabled and not in maintenance mode."""
         data = await self._get("/status/carp")
         if not isinstance(data, dict):
             return False
         return bool(data.get("enable")) and not data.get("maintenance_mode")
 
     async def get_carp_interfaces(self) -> list[dict]:
+        """Return the CARP virtual IPs with their status."""
         data = await self._get("/firewall/virtual_ips") or []
         carp = []
         for vip in data:
@@ -496,11 +533,11 @@ class Client:
     # --------------------------------------------------------- state table
 
     async def reset_state_table(self) -> None:
-        await self._request(
-            "DELETE", "/firewall/states", params={"limit": 0}
-        )
+        """Flush the entire firewall state table."""
+        await self._request("DELETE", "/firewall/states", params={"limit": 0})
 
     async def kill_states(self, source: str, destination: str | None = None) -> None:
+        """Kill states for a source (and optional destination) via pfctl."""
         cmd = f"/sbin/pfctl -k {_shq(source)}"
         if destination:
             cmd += f" -k {_shq(destination)}"
@@ -528,14 +565,12 @@ class Client:
         async with self._write_lock:
             for prefix in prefixes:
                 for field in ("source", "destination"):
-                    try:
+                    with contextlib.suppress(PfSenseAPIError):
                         await self._request(
                             "DELETE",
                             "/firewall/states",
                             params={f"{field}__startswith": prefix, "limit": 0},
                         )
-                    except PfSenseAPIError:
-                        pass
 
     async def _rule_match_networks(self, rule: dict) -> list:
         """Concrete ``ip_network`` objects for a rule's source + destination."""
@@ -563,20 +598,21 @@ class Client:
     # ------------------------------------------------------- system control
 
     async def system_reboot(self, type: str = "normal") -> None:
-        try:
+        """Reboot the firewall."""
+        # The connection drops as the box goes down -- that is success.
+        with contextlib.suppress(PfSenseConnectionError):
             await self._request("POST", "/diagnostics/reboot", payload={})
-        except PfSenseConnectionError:
-            pass  # connection drops as the box goes down
 
     async def system_halt(self) -> None:
-        try:
+        """Halt (power off) the firewall."""
+        # The connection drops as the box goes down -- that is success.
+        with contextlib.suppress(PfSenseConnectionError):
             await self._request("POST", "/diagnostics/halt_system", payload={})
-        except PfSenseConnectionError:
-            pass
 
     # ------------------------------------------------------------------ wol
 
     async def send_wol(self, interface: str, mac: str) -> None:
+        """Send a Wake-on-LAN magic packet on an interface."""
         await self._request(
             "POST",
             "/services/wake_on_lan/send",
@@ -586,6 +622,7 @@ class Client:
     # -------------------------------------------------------------- exec_*
 
     async def exec_command(self, command: str, background: bool = False) -> str:
+        """Run a shell command via the diagnostics endpoint and return its output."""
         if background:
             command = f"{command} &"
         data = await self._request(
@@ -611,11 +648,11 @@ def _as_network(value: str):
 
 
 def _states_prefix(net) -> str | None:
-    """``str`` that ``firewall/state`` source/destination values start with for
-    every address in ``net``, or ``None`` if ``net`` can't be expressed that way.
+    """Return the string every ``firewall/state`` endpoint in ``net`` starts with.
 
-    States render endpoints as ``ip:port`` (IPv4) so a host becomes ``"ip:"``
-    and an octet-aligned network becomes its leading octets plus a dot.
+    Returns ``None`` when ``net`` can't be expressed as such a prefix. States
+    render endpoints as ``ip:port`` (IPv4), so a host becomes ``"ip:"`` and an
+    octet-aligned network becomes its leading octets plus a dot.
     """
     if net.version != 4:
         return None
@@ -648,7 +685,7 @@ def _expand_alias_networks(aliases: list[dict], name: str, _depth: int = 3) -> l
 
 
 def _flatten_params(params: dict | None) -> dict | None:
-    """aiohttp needs str values; drop ``None`` and stringify the rest."""
+    """Aiohttp needs str values; drop ``None`` and stringify the rest."""
     if not params:
         return None
     return {k: str(v) for k, v in params.items() if v is not None}

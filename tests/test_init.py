@@ -3,17 +3,18 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from homeassistant.const import CONF_URL, CONF_VERIFY_SSL
-from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.pfsense import async_setup_entry, async_unload_entry
 from custom_components.pfsense.const import CONF_API_KEY, DOMAIN
+from homeassistant.const import CONF_URL, CONF_VERIFY_SSL
+from homeassistant.core import HomeAssistant
 
 
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(enable_custom_integrations):
-    yield
+    """Test helper."""
+    return
 
 
 def _full_client_mock():
@@ -55,6 +56,7 @@ def _full_client_mock():
 
 @pytest.mark.asyncio
 async def test_setup_and_unload_entry(hass: HomeAssistant):
+    """Test setup and unload entry."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         version=3,

@@ -3,14 +3,15 @@
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
-from homeassistant.components.switch import SwitchEntityDescription
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.pfsense.switch import PfSenseServiceSwitch
+from homeassistant.components.switch import SwitchEntityDescription
 
 
 @pytest.fixture
 def mock_coordinator():
+    """Test helper."""
     coord = MagicMock()
     coord.data = {
         "services": [
@@ -33,6 +34,7 @@ def mock_coordinator():
     return_value="pfSense",
 )
 async def test_service_switch_turn_off(mock_name, mock_uid, mock_coordinator):
+    """Test service switch turn off."""
     desc = SwitchEntityDescription(key="service.unbound.status", name="unbound")
     switch = PfSenseServiceSwitch(MockConfigEntry(), mock_coordinator, desc)
 

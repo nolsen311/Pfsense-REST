@@ -27,7 +27,7 @@ async def async_setup_entry(
         data = hass.data[DOMAIN][config_entry.entry_id]
         coordinator = data[COORDINATOR]
 
-        entities = [
+        return [
             PfSenseRebootButton(
                 config_entry,
                 coordinator,
@@ -52,7 +52,6 @@ async def async_setup_entry(
                 ),
             ),
         ]
-        return entities
 
     cem = CoordinatorEntityManager(
         hass,
@@ -73,6 +72,7 @@ class PfSenseButton(PfSenseEntity, ButtonEntity):
         coordinator: DataUpdateCoordinator,
         entity_description: ButtonEntityDescription,
     ) -> None:
+        """Initialize the object."""
         self.config_entry = config_entry
         self.entity_description = entity_description
         self.coordinator = coordinator
@@ -83,15 +83,24 @@ class PfSenseButton(PfSenseEntity, ButtonEntity):
 
 
 class PfSenseRebootButton(PfSenseButton):
+    """Button that reboots the firewall."""
+
     async def async_press(self) -> None:
+        """Handle the button press."""
         await self.service_system_reboot()
 
 
 class PfSenseHaltButton(PfSenseButton):
+    """Button that halts the firewall."""
+
     async def async_press(self) -> None:
+        """Handle the button press."""
         await self.service_system_halt()
 
 
 class PfSenseResetStatesButton(PfSenseButton):
+    """Button that flushes the firewall state table."""
+
     async def async_press(self) -> None:
+        """Handle the button press."""
         await self.service_reset_state_table()

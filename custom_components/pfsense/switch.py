@@ -60,7 +60,7 @@ async def async_setup_entry(
                     config_entry,
                     coordinator,
                     SwitchEntityDescription(
-                        key="filter.{}".format(tracker),
+                        key=f"filter.{tracker}",
                         name="Filter Rule {} ({})".format(
                             tracker, rule.get("descr", "")
                         ),
@@ -99,7 +99,7 @@ async def async_setup_entry(
                         config_entry,
                         coordinator,
                         SwitchEntityDescription(
-                            key="{}.{}".format(rule_type, tracker),
+                            key=f"{rule_type}.{tracker}",
                             name="{} {} ({})".format(
                                 label, tracker, rule.get("descr", "")
                             ),
@@ -112,7 +112,7 @@ async def async_setup_entry(
 
         # services
         for service in state["services"]:
-            for property in ["status"]:
+            for prop in ["status"]:
                 icon = "mdi:application-cog-outline"
                 # likely only want very specific services to manipulate from actions
                 enabled_default = False
@@ -122,14 +122,14 @@ async def async_setup_entry(
                 if service["name"] == "openvpn" and service.get("vpnid"):
                     key = "service.{}.{}".format(
                         service["name"] + "-" + str(service["vpnid"]),
-                        property,
+                        prop,
                     )
                     name = "Service {} {}".format(
-                        service["name"] + " " + service.get("description", ""), property
+                        service["name"] + " " + service.get("description", ""), prop
                     )
                 else:
-                    key = "service.{}.{}".format(service["name"], property)
-                    name = "Service {} {}".format(service["name"], property)
+                    key = "service.{}.{}".format(service["name"], prop)
+                    name = "Service {} {}".format(service["name"], prop)
 
                 entity = PfSenseServiceSwitch(
                     config_entry,
@@ -157,6 +157,8 @@ async def async_setup_entry(
 
 
 class PfSenseSwitch(PfSenseEntity, SwitchEntity):
+    """Base class for pfSense switches."""
+
     def __init__(
         self,
         config_entry,
@@ -174,10 +176,12 @@ class PfSenseSwitch(PfSenseEntity, SwitchEntity):
 
     @property
     def is_on(self):
+        """Return true if the entity is on."""
         return False
 
     @property
     def extra_state_attributes(self):
+        """Return the entity's extra state attributes."""
         return None
 
     async def _maybe_kill_rule_states(self, rule):
@@ -190,11 +194,13 @@ class PfSenseSwitch(PfSenseEntity, SwitchEntity):
             return
         try:
             await self._get_pfsense_client().kill_states_for_rule(rule)
-        except Exception:  # best effort - never fail the toggle over this
+        except Exception:
             _LOGGER.warning("failed to kill states for toggled rule", exc_info=True)
 
 
 class PfSenseFilterSwitch(PfSenseSwitch):
+    """Switch that enables or disables a firewall rule."""
+
     def _pfsense_get_tracker(self):
         return self.entity_description.key.split(".")[1]
 
@@ -208,6 +214,7 @@ class PfSenseFilterSwitch(PfSenseSwitch):
 
     @property
     def available(self) -> bool:
+        """Return whether the entity is available."""
         rule = self._pfsense_get_rule()
         if rule is None:
             return False
@@ -216,6 +223,7 @@ class PfSenseFilterSwitch(PfSenseSwitch):
 
     @property
     def is_on(self):
+        """Return true if the entity is on."""
         rule = self._pfsense_get_rule()
         if rule is None:
             return STATE_UNKNOWN
@@ -245,6 +253,8 @@ class PfSenseFilterSwitch(PfSenseSwitch):
 
 
 class PfSenseNatSwitch(PfSenseSwitch):
+    """Switch that enables or disables a NAT rule."""
+
     def _pfsense_get_rule_type(self):
         return self.entity_description.key.split(".")[0]
 
@@ -267,6 +277,7 @@ class PfSenseNatSwitch(PfSenseSwitch):
 
     @property
     def available(self) -> bool:
+        """Return whether the entity is available."""
         rule = self._pfsense_get_rule()
         if rule is None:
             return False
@@ -275,6 +286,7 @@ class PfSenseNatSwitch(PfSenseSwitch):
 
     @property
     def is_on(self):
+        """Return true if the entity is on."""
         rule = self._pfsense_get_rule()
         if rule is None:
             return STATE_UNKNOWN
@@ -316,6 +328,8 @@ class PfSenseNatSwitch(PfSenseSwitch):
 
 
 class PfSenseServiceSwitch(PfSenseSwitch):
+    """Switch that starts or stops a pfSense service."""
+
     def _pfsense_get_property_name(self):
         return self.entity_description.key.split(".")[2]
 
@@ -330,9 +344,10 @@ class PfSenseServiceSwitch(PfSenseSwitch):
             if service_name.startswith("openvpn"):
                 # [ "openvpn", "<vpnid>""]
                 parts = service_name.split("-")
-                if service["name"] == parts[0] and str(
-                    service.get("vpnid")
-                ) == parts[1]:
+                if (
+                    service["name"] == parts[0]
+                    and str(service.get("vpnid")) == parts[1]
+                ):
                     found = service
             elif service["name"] == service_name:
                 found = service
@@ -341,20 +356,21 @@ class PfSenseServiceSwitch(PfSenseSwitch):
 
     @property
     def available(self) -> bool:
+        """Return whether the entity is available."""
         service = self._pfsense_get_service()
-        property = self._pfsense_get_property_name()
-        if service is None or property not in service.keys():
+        prop = self._pfsense_get_property_name()
+        if service is None or prop not in service:
             return False
 
         return super().available
 
     @property
     def is_on(self):
+        """Return true if the entity is on."""
         service = self._pfsense_get_service()
-        property = self._pfsense_get_property_name()
+        prop = self._pfsense_get_property_name()
         try:
-            value = service[property]
-            return value
+            return service[prop]
         except KeyError:
             return STATE_UNKNOWN
 

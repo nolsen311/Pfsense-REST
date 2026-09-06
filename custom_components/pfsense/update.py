@@ -57,6 +57,8 @@ async def async_setup_entry(
 
 
 class PfSenseUpdate(PfSenseEntity, UpdateEntity):
+    """Base class for the pfSense update entity."""
+
     def __init__(
         self,
         config_entry,
@@ -79,12 +81,16 @@ class PfSenseUpdate(PfSenseEntity, UpdateEntity):
 
     @property
     def device_class(self):
+        """Return the device class."""
         return UpdateDeviceClass.FIRMWARE
 
 
 class PfSenseFirmwareUpdatesAvailableUpdate(PfSenseUpdate):
+    """Update entity reporting available package upgrades."""
+
     @property
     def available(self):
+        """Return whether the entity is available."""
         state = self.coordinator.data
         if (
             state["firmware_update_info"] is None
@@ -97,6 +103,7 @@ class PfSenseFirmwareUpdatesAvailableUpdate(PfSenseUpdate):
 
     @property
     def title(self):
+        """Return the title."""
         return "pfSense"
 
     @property
@@ -128,6 +135,7 @@ class PfSenseFirmwareUpdatesAvailableUpdate(PfSenseUpdate):
 
     @property
     def extra_state_attributes(self):
+        """Return the entity's extra state attributes."""
         state = self.coordinator.data
         attrs = {}
         info = dict_get(state, "firmware_update_info.base", {})
@@ -135,7 +143,7 @@ class PfSenseFirmwareUpdatesAvailableUpdate(PfSenseUpdate):
         if not info:
             return attrs
 
-        for key in info.keys():
+        for key in info:
             attrs[f"pfsense_base_{key}"] = dict_get(
                 state, f"firmware_update_info.base.{key}"
             )
@@ -144,4 +152,5 @@ class PfSenseFirmwareUpdatesAvailableUpdate(PfSenseUpdate):
 
     @property
     def release_url(self):
+        """Return the release notes URL."""
         return "https://docs.netgate.com/pfsense/en/latest/releases/index.html"

@@ -9,11 +9,7 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import (
-    PERCENTAGE,
-    UnitOfTemperature,
-    UnitOfTime,
-)
+from homeassistant.const import PERCENTAGE, UnitOfTemperature, UnitOfTime
 
 DEFAULT_USERNAME = "admin"
 DOMAIN = "pfsense"

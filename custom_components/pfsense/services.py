@@ -1,11 +1,14 @@
+"""Home Assistant service registration for the pfSense integration."""
+
 import logging
+
+import voluptuous as vol
 
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import async_get_platforms
 from homeassistant.helpers.service import entity_service_call
-import voluptuous as vol
 
 from .const import (
     DOMAIN,
@@ -35,6 +38,8 @@ def async_get_entities(hass: HomeAssistant) -> dict[str, Entity]:
 
 
 class ServiceRegistrar:
+    """Registers the integration's Home Assistant services once."""
+
     def __init__(
         self,
         hass: HomeAssistant,
@@ -44,26 +49,25 @@ class ServiceRegistrar:
 
     @callback
     def async_register(self):
+        """Register the integration's services once."""
         if "loaded" in _data:
             return
 
         _data.add("loaded")
 
-        # --- DEFERRED RUNTIME INJECTION PATCH ---
-        from . import PfSenseEntity
+        # Deferred to break the services <-> __init__ import cycle.
+        from . import PfSenseEntity  # noqa: PLC0415
 
         async def service_update_alias(
-            self_entity,
+            self,
             alias_name: str,
             address: str,
             action: str,
             kill_states: bool = True,
         ):
-            """Dynamic extension mapping runtime command parameters directly to the Client interface."""
-            client = self_entity._get_pfsense_client()
-            await client.update_alias_address(
-                alias_name, address, action, kill_states
-            )
+            """Bind the update_alias service onto PfSenseEntity at runtime."""
+            client = self._get_pfsense_client()
+            await client.update_alias_address(alias_name, address, action, kill_states)
 
         if not hasattr(PfSenseEntity, "service_update_alias"):
             PfSenseEntity.service_update_alias = service_update_alias

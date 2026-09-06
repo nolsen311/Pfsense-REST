@@ -3,15 +3,15 @@
 import re
 
 import aiohttp
-import pytest
 from aioresponses import aioresponses
+import pytest
 
 from custom_components.pfsense.pypfsense import (
     Client,
+    PfSenseAPIError,
     PfSenseAuthError,
     PfSenseNotFoundError,
     PfSensePrivilegeError,
-    PfSenseAPIError,
     _build_telemetry,
     dict_get,
 )
@@ -32,11 +32,13 @@ def _envelope(data, code=200, status="ok", response_id="SUCCESS", message=""):
 
 @pytest.fixture
 async def client():
+    """Test helper."""
     async with aiohttp.ClientSession() as session:
         yield Client(BASE, "test-key", session, {"verify_ssl": False})
 
 
 def test_dict_get():
+    """Test dict get."""
     data = {"a": {"b": [{"c": 1}]}, "n": {2: "x"}}
     assert dict_get(data, "a.b.0.c") == 1
     assert dict_get(data, "n.2") == "x"
@@ -45,18 +47,26 @@ def test_dict_get():
 
 
 def test_base_url_strips_path():
+    """Test base url strips path."""
     c = Client("https://pf.example:8444/ui/", "k", object())
     assert c._base == "https://pf.example:8444/api/v2"
 
 
 async def test_request_unwraps_data(client):
+    """Test request unwraps data."""
     with aioresponses() as m:
-        m.get(f"{API}/system/hostname", payload=_envelope({"hostname": "pf", "domain": "lan"}))
-        assert await client._get("/system/hostname") == {"hostname": "pf", "domain": "lan"}
+        m.get(
+            f"{API}/system/hostname",
+            payload=_envelope({"hostname": "pf", "domain": "lan"}),
+        )
+        assert await client._get("/system/hostname") == {
+            "hostname": "pf",
+            "domain": "lan",
+        }
 
 
 @pytest.mark.parametrize(
-    "code,exc",
+    ("code", "exc"),
     [
         (401, PfSenseAuthError),
         (403, PfSensePrivilegeError),
@@ -65,17 +75,21 @@ async def test_request_unwraps_data(client):
     ],
 )
 async def test_error_codes_map_to_exceptions(client, code, exc):
+    """Test error codes map to exceptions."""
     with aioresponses() as m:
         m.get(
             f"{API}/system/hostname",
             status=code,
-            payload=_envelope([], code=code, status="err", response_id="X", message="nope"),
+            payload=_envelope(
+                [], code=code, status="err", response_id="X", message="nope"
+            ),
         )
         with pytest.raises(exc):
             await client._get("/system/hostname")
 
 
 async def test_get_system_info_merges_endpoints(client):
+    """Test get system info merges endpoints."""
     with aioresponses() as m:
         m.get(
             f"{API}/status/system",
@@ -98,6 +112,7 @@ async def test_get_system_info_merges_endpoints(client):
 
 
 async def test_carp_status_reduces_to_bool(client):
+    """Test carp status reduces to bool."""
     with aioresponses() as m:
         m.get(
             f"{API}/status/carp",
@@ -114,16 +129,24 @@ async def test_carp_status_reduces_to_bool(client):
 
 def _patch_body(m):
     return next(
-        r for (method, url), reqs in m.requests.items()
-        for r in reqs if method == "PATCH"
+        r
+        for (method, url), reqs in m.requests.items()
+        for r in reqs
+        if method == "PATCH"
     ).kwargs["json"]
 
 
 async def test_disable_filter_rule_patches_then_applies(client):
+    """Test disable filter rule patches then applies."""
     rules = [
         {"id": 4, "tracker": 111, "disabled": False, "descr": "r"},
-        {"id": 5, "tracker": 222, "disabled": False, "descr": "r2",
-         "statetype": "keep state"},
+        {
+            "id": 5,
+            "tracker": 222,
+            "disabled": False,
+            "descr": "r2",
+            "statetype": "keep state",
+        },
     ]
     with aioresponses() as m:
         m.get(f"{API}/firewall/rules", payload=_envelope(rules))
@@ -134,6 +157,7 @@ async def test_disable_filter_rule_patches_then_applies(client):
 
 
 async def test_disable_filter_rule_backfills_empty_statetype(client):
+    """Test disable filter rule backfills empty statetype."""
     # pfSense's GUI writes ``<statetype></statetype>``; a bare disabled PATCH then
     # fails FIELD_EMPTY_NOT_ALLOWED, so the client re-sends the default.
     rules = [{"id": 5, "tracker": 222, "disabled": False, "statetype": ""}]
@@ -150,6 +174,7 @@ async def test_disable_filter_rule_backfills_empty_statetype(client):
 
 
 async def test_kill_states_for_rule_resolves_alias_to_prefix(client):
+    """Test kill states for rule resolves alias to prefix."""
     rule = {"source": "kids", "destination": "any"}
     aliases = [{"name": "kids", "type": "network", "address": ["10.0.10.0/24"]}]
     with aioresponses() as m:
@@ -171,6 +196,7 @@ async def test_kill_states_for_rule_resolves_alias_to_prefix(client):
 
 
 async def test_kill_states_for_rule_skips_unresolvable_endpoints(client):
+    """Test kill states for rule skips unresolvable endpoints."""
     # ``any`` / ``(self)`` / a /25 network have no usable prefix -> no request.
     rule = {"source": "any", "destination": "(self)"}
     with aioresponses() as m:
@@ -179,6 +205,7 @@ async def test_kill_states_for_rule_skips_unresolvable_endpoints(client):
 
 
 async def test_build_telemetry_shape():
+    """Test build telemetry shape."""
     system = {
         "cpu_usage": 12.5,
         "cpu_count": 4,
@@ -193,9 +220,7 @@ async def test_build_telemetry_shape():
         {"name": "lan", "descr": "LAN", "inbytes": 5},
     ]
     gateways = [{"name": "WAN_DHCP", "delay": 1.2, "status": "online"}]
-    ovpn = [
-        {"vpnid": 1, "name": "S", "conns": [{"bytes_recv": 100, "bytes_sent": 50}]}
-    ]
+    ovpn = [{"vpnid": 1, "name": "S", "conns": [{"bytes_recv": 100, "bytes_sent": 50}]}]
     t = _build_telemetry(system, interfaces, gateways, ovpn)
     assert t["wan_ip"] == "1.2.3.4"
     assert t["cpu"]["used_percent"] == 12.5

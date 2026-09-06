@@ -30,7 +30,7 @@ async def async_setup_entry(
     def process_entities_callback(hass, config_entry):
         data = hass.data[DOMAIN][config_entry.entry_id]
         coordinator = data[COORDINATOR]
-        entities = [
+        return [
             PfSenseCarpStatusBinarySensor(
                 config_entry,
                 coordinator,
@@ -42,7 +42,6 @@ async def async_setup_entry(
                 False,
             )
         ]
-        return entities
 
     cem = CoordinatorEntityManager(
         hass,
@@ -55,6 +54,8 @@ async def async_setup_entry(
 
 
 class PfSenseBinarySensor(PfSenseEntity, BinarySensorEntity):
+    """Base class for pfSense binary sensors."""
+
     def __init__(
         self,
         config_entry,
@@ -74,20 +75,26 @@ class PfSenseBinarySensor(PfSenseEntity, BinarySensorEntity):
 
     @property
     def is_on(self):
+        """Return true if the entity is on."""
         return False
 
     @property
     def device_class(self):
+        """Return the device class."""
         return None
 
     @property
     def extra_state_attributes(self):
+        """Return the entity's extra state attributes."""
         return None
 
 
 class PfSenseCarpStatusBinarySensor(PfSenseBinarySensor):
+    """Binary sensor for the CARP maintenance/enable state."""
+
     @property
     def is_on(self):
+        """Return true if the entity is on."""
         state = self.coordinator.data
         try:
             return state["carp_status"]
