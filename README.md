@@ -38,7 +38,7 @@ rules, services, aliases and routing from Home Assistant.
 2. Add the repository URL and set the category to **Integration**:
 
    ```text
-   https://github.com/nolsen311/Pfsense-pro
+   https://github.com/nolsen311/Pfsense-REST
    ```
 
 3. Download **pfSense Pro**, then restart Home Assistant.
