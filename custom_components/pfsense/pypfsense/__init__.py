@@ -306,7 +306,13 @@ class Client:
             self._get("/routing/gateways"),
             self._get("/routing/gateway/default"),
         )
-        default_names = set(default.values()) if isinstance(default, dict) else set()
+        default_names = set()
+        if isinstance(default, dict):
+            default_names = {
+                default.get("defaultgw4"),
+                default.get("defaultgw6"),
+            }
+            default_names.discard(None)
         out = {}
         for gw in gateways or []:
             name = gw.get("name")
