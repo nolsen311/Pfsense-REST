@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Connect to the pfSense firewall / router",
-        "description": "Enter the base URL of the pfSense REST API (including the port, e.g. https://pfsense.local:8444) and an API key generated at System › REST API › Keys.",
+        "description": "Enter the base URL of the pfSense REST API (including the port, e.g. {example_url}) and an API key generated at System › REST API › Keys.",
         "data": {
           "url": "URL",
           "api_key": "API key",
