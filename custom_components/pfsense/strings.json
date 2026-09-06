@@ -1,5 +1,5 @@
 {
-  "title": "Connect to the pfSense firewall / router",
+  "title": "pfSense REST",
   "config": {
     "step": {
       "user": {

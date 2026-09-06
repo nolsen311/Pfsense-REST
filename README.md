@@ -1,9 +1,19 @@
 # 🛡️ pfSense-Pro
 **The high-performance, real-time perimeter security, telemetry, and dynamic policy routing platform for Home Assistant.**
 
-> ⚠️ **LATEST ARCHITECTURAL REWRITE ANNOUNCEMENT**
+> ⚠️ **v3: NOW ON THE pfSense REST API v2**
 >
-> This project is a complete, ground-up rewrite! We have successfully migrated to a Dynamic Entity Auto-Discovery Engine. The integration now features an optimized XML-RPC non-blocking mutex pipeline, a protective storage smart-cache system, direct browser DOM-injection counters to prevent dashboard freezing, and an instantaneous connection State-Killing matrix.
+> As of v3 this integration talks to the **pfSense REST API v2**
+> (`pfSense-pkg-RESTAPI`, pfSense 26.07+) over async HTTP with an API key —
+> the XML-RPC / `exec_php` transport has been removed entirely. It keeps the
+> dynamic entity auto-discovery and the storage smart-cache.
+>
+> **Breaking changes from v2:** authentication is now an API key (existing
+> installs are prompted to re-authenticate); the API URL must include its port;
+> the `exec_php` service and the pending-notices sensor/services are gone (no
+> REST equivalent); the firmware `update` entity is read-only; and sensors with
+> no REST data source were removed (memory byte figures, CPU frequency,
+> per-filesystem usage, boot time, per-interface blocked-traffic counters).
 
 [![Latest Release](https://img.shields.io/github/v/release/DonTranQuiL/Pfsense-pro?style=for-the-badge&color=007ec6)](https://github.com/DonTranQuiL/Pfsense-pro/releases)
 [![License](https://img.shields.io/github/license/DonTranQuiL/Pfsense-pro?style=for-the-badge&color=007ec6)](https://github.com/DonTranQuiL/Pfsense-pro/blob/main/LICENSE)
