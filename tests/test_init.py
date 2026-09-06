@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.pfsense import async_setup_entry, async_unload_entry
 from custom_components.pfsense.const import CONF_API_KEY, DOMAIN
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_URL, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
 
@@ -60,6 +60,8 @@ async def test_setup_and_unload_entry(hass: HomeAssistant):
     entry = MockConfigEntry(
         domain=DOMAIN,
         version=3,
+        title="router.local",
+        unique_id="abc",
         data={
             CONF_URL: "https://192.168.1.1:8444",
             CONF_API_KEY: "k",
@@ -77,22 +79,18 @@ async def test_setup_and_unload_entry(hass: HomeAssistant):
         ),
         patch("custom_components.pfsense.async_load_cache", return_value=None),
         patch("custom_components.pfsense.async_save_cache"),
-        patch(
-            "homeassistant.config_entries.ConfigEntries.async_forward_entry_setups",
-            return_value=True,
-        ) as mock_forward,
     ):
-        assert await async_setup_entry(hass, entry) is True
-        assert mock_forward.called
-        assert DOMAIN in hass.data
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
 
-    with patch(
-        "homeassistant.config_entries.ConfigEntries.async_unload_platforms",
-        return_value=True,
-    ) as mock_unload:
-        assert await async_unload_entry(hass, entry) is True
-        assert mock_unload.called
-        assert entry.entry_id not in hass.data.get(DOMAIN, {})
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.entry_id in hass.data[DOMAIN]
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.NOT_LOADED
+    assert entry.entry_id not in hass.data.get(DOMAIN, {})
 
 
 @pytest.mark.asyncio

@@ -6,11 +6,11 @@
   ],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://github.com/nolsen311/Pfsense-pro",
+  "documentation": "https://github.com/nolsen311/Pfsense-REST",
   "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/nolsen311/Pfsense-pro/issues",
+  "issue_tracker": "https://github.com/nolsen311/Pfsense-REST/issues",
   "requirements": [
     "mac-vendor-lookup>=0.1.11"
   ],
-  "version": "0.10.0"
+  "version": "0.10.1"
 }
