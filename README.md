@@ -5,6 +5,14 @@ API v2** (`pfSense-pkg-RESTAPI`). It surfaces live system, interface, gateway,
 DHCP and VPN telemetry as entities, and lets you drive firewall rules, NAT
 rules, services, aliases and routing from Home Assistant.
 
+> **Origin.** This project started as a fork of
+> [DonTranQuiL/Pfsense-pro](https://github.com/DonTranQuiL/Pfsense-pro), but has
+> since been extensively rewritten — the XML-RPC client was replaced with a
+> native async REST API v2 client and most of the integration was reworked, with
+> the help of Claude Cowork. It has been de-forked from the upstream repository so
+> that pull requests don't get opened against DonTranQuiL/Pfsense-pro by mistake.
+> It is now maintained as a standalone project.
+
 [![Latest Release](https://img.shields.io/github/v/release/nolsen311/Pfsense-pro?style=for-the-badge&color=007ec6)](https://github.com/nolsen311/Pfsense-pro/releases)
 [![License](https://img.shields.io/github/license/nolsen311/Pfsense-pro?style=for-the-badge&color=007ec6)](https://github.com/nolsen311/Pfsense-pro/blob/main/LICENSE)
 [![Tests](https://img.shields.io/github/actions/workflow/status/nolsen311/Pfsense-pro/pytest.yml?style=for-the-badge&label=TESTS&color=5dbb0f)](https://github.com/nolsen311/Pfsense-pro/actions/workflows/pytest.yml)
