@@ -205,8 +205,8 @@ class PfSenseScannerEntity(PfSenseEntity, ScannerEntity):
         """Return extra state attributes."""
         entry = self._get_pfsense_arp_entry()
         if entry is not None:
-            for property in ["interface", "expires", "type"]:
-                self._extra_state[property] = entry.get(property)
+            for prop in ["interface", "expires", "type"]:
+                self._extra_state[prop] = entry.get(prop)
 
         if self._last_known_hostname is not None:
             self._extra_state["last_known_hostname"] = self._last_known_hostname

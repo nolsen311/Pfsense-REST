@@ -188,7 +188,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
         cached_data = await async_load_cache(hass, entry.entry_id)
         if cached_data:
-            data._state = cached_data
+            data.restore_state(cached_data)
             return cached_data
         raise UpdateFailed("pfSense poll failed and no usable cache is available")
 
@@ -226,8 +226,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
                 if new_dt_state:
                     return new_dt_state
 
-            if device_tracker_data._state:
-                return device_tracker_data._state
+            if device_tracker_data.state:
+                return device_tracker_data.state
             raise UpdateFailed("pfSense device tracker update failed")
 
         device_tracker_coordinator = DataUpdateCoordinator(
@@ -313,7 +313,12 @@ class PfSenseData:
 
     @property
     def state(self):
+        """Return the most recently fetched (or restored) poll state."""
         return self._state
+
+    def restore_state(self, state: dict) -> None:
+        """Adopt a state dict loaded from the on-disk cache."""
+        self._state = state
 
     async def update(self, opts=None):
         """Fetch the latest state from pfSense over the REST API."""

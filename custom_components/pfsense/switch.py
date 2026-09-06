@@ -112,7 +112,7 @@ async def async_setup_entry(
 
         # services
         for service in state["services"]:
-            for property in ["status"]:
+            for prop in ["status"]:
                 icon = "mdi:application-cog-outline"
                 # likely only want very specific services to manipulate from actions
                 enabled_default = False
@@ -122,14 +122,14 @@ async def async_setup_entry(
                 if service["name"] == "openvpn" and service.get("vpnid"):
                     key = "service.{}.{}".format(
                         service["name"] + "-" + str(service["vpnid"]),
-                        property,
+                        prop,
                     )
                     name = "Service {} {}".format(
-                        service["name"] + " " + service.get("description", ""), property
+                        service["name"] + " " + service.get("description", ""), prop
                     )
                 else:
-                    key = "service.{}.{}".format(service["name"], property)
-                    name = "Service {} {}".format(service["name"], property)
+                    key = "service.{}.{}".format(service["name"], prop)
+                    name = "Service {} {}".format(service["name"], prop)
 
                 entity = PfSenseServiceSwitch(
                     config_entry,
@@ -343,8 +343,8 @@ class PfSenseServiceSwitch(PfSenseSwitch):
     @property
     def available(self) -> bool:
         service = self._pfsense_get_service()
-        property = self._pfsense_get_property_name()
-        if service is None or property not in service:
+        prop = self._pfsense_get_property_name()
+        if service is None or prop not in service:
             return False
 
         return super().available

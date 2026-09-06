@@ -54,14 +54,14 @@ class ServiceRegistrar:
         from . import PfSenseEntity  # noqa: PLC0415
 
         async def service_update_alias(
-            self_entity,
+            self,
             alias_name: str,
             address: str,
             action: str,
             kill_states: bool = True,
         ):
-            """Dynamic extension mapping runtime command parameters directly to the Client interface."""
-            client = self_entity._get_pfsense_client()
+            """Bind the update_alias service onto PfSenseEntity at runtime."""
+            client = self._get_pfsense_client()
             await client.update_alias_address(alias_name, address, action, kill_states)
 
         if not hasattr(PfSenseEntity, "service_update_alias"):

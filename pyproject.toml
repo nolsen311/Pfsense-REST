@@ -156,10 +156,6 @@ ignore = [
   "D107",    # undocumented __init__
   "D205",    # blank line after docstring summary
   "D415",    # docstring first line punctuation
-  "A001",    # `property` used as a loop variable shadows the builtin
-  "SLF001",  # private-member access (coordinator `_state` fallback path)
-  "INP001",  # `tests/` is not a package
-  "PT022",   # fixture yields without teardown
 ]
 
 [tool.ruff.lint.flake8-pytest-style]
@@ -181,9 +177,11 @@ split-on-trailing-comma = false
 "custom_components/*/*" = ["TID252"]
 "custom_components/*/*/*" = ["TID252"]
 
+# Tests reach into client / entity internals on purpose
+"tests/**" = ["PTH", "SLF001"]
+
 # Temporary, mirroring Home Assistant core
 "custom_components/**" = ["PTH"]
-"tests/**" = ["PTH"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 25
