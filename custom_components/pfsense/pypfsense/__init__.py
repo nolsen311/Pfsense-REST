@@ -1,7 +1,9 @@
 """Async client for the pfSense REST API v2 (pfSense-pkg-RESTAPI >= 2.10).
 
 This replaces the previous XML-RPC / ``exec_php`` client entirely. Every call is a
-JSON HTTP request against ``/api/v2`` authenticated with an ``x-api-key`` header.
+JSON HTTP request against ``/api/v2``. One of three pfRest auth schemes is used
+per client: an ``x-api-key`` header, HTTP Basic, or a Bearer JWT the client mints
+from ``POST /api/v2/auth/jwt`` (with Basic) and refreshes on expiry.
 
 The response envelope for every endpoint is::
 
@@ -13,6 +15,7 @@ The response envelope for every endpoint is::
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import ipaddress
 import logging
@@ -26,6 +29,11 @@ _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 30
 API_BASE = "/api/v2"
+
+AUTH_API_KEY = "api_key"
+AUTH_BASIC = "basic"
+AUTH_JWT = "jwt"
+_JWT_MINT_PATH = "/auth/jwt"
 
 
 def dict_get(data: dict, path: str, default=None):
@@ -79,35 +87,77 @@ class Client:
     url:
         Base URL of the API, e.g. ``https://pfsense.example:8444``. Any path is
         stripped; ``/api/v2`` is appended internally.
-    api_key:
-        Value for the ``x-api-key`` header (System > REST API > Keys on the box).
     session:
         Shared :class:`aiohttp.ClientSession`, normally
         ``homeassistant.helpers.aiohttp_client.async_get_clientsession(hass)``.
-    opts:
-        Optional dict; ``{"verify_ssl": bool}`` is honoured for parity with the
-        old client (TLS verification is really controlled by ``session``, so the
-        caller should pick the session accordingly).
+    auth_method:
+        ``"api_key"`` (default), ``"basic"`` or ``"jwt"``.
+    api_key:
+        Value for the ``x-api-key`` header (System > REST API > Keys). Required
+        for ``auth_method="api_key"``.
+    username / password:
+        A pfSense local user's credentials. Required for ``"basic"`` and
+        ``"jwt"`` (the JWT is minted from them and refreshed on expiry).
+    verify_ssl:
+        Kept for parity with the old client; TLS verification is really governed
+        by ``session``, so the caller should pick the session accordingly.
     """
 
     def __init__(
         self,
         url: str,
-        api_key: str,
         session: aiohttp.ClientSession,
-        opts: dict | None = None,
+        *,
+        auth_method: str = AUTH_API_KEY,
+        api_key: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
+        verify_ssl: bool = True,
     ) -> None:
-        """Store the base URL, API key, aiohttp session and options."""
-        opts = opts or {}
+        """Store the base URL, aiohttp session and the chosen auth scheme."""
         parts = urlparse(url.rstrip("/"))
         self._base = f"{parts.scheme}://{parts.netloc}{API_BASE}"
-        self._api_key = api_key
         self._session = session
-        self._verify_ssl = opts.get("verify_ssl", True)
+        self._verify_ssl = verify_ssl
         # Serialize write -> /apply sequences; concurrent applies race on-box.
         self._write_lock = asyncio.Lock()
 
+        self._auth_method = auth_method
+        self._api_key = api_key
+        self._basic_header: str | None = None
+        if auth_method in (AUTH_BASIC, AUTH_JWT):
+            if not username or not password:
+                raise PfSenseAuthError(
+                    f"{auth_method} auth needs a username and password"
+                )
+            token = base64.b64encode(f"{username}:{password}".encode()).decode()
+            self._basic_header = f"Basic {token}"
+        elif auth_method == AUTH_API_KEY:
+            if not api_key:
+                raise PfSenseAuthError("api_key auth needs an API key")
+        else:
+            raise PfSenseAuthError(f"unknown auth method {auth_method!r}")
+
+        self._jwt: str | None = None
+        self._jwt_lock = asyncio.Lock()
+
     # ------------------------------------------------------------------ core
+
+    async def _mint_jwt(self) -> None:
+        """Exchange the stored Basic credentials for a fresh JWT."""
+        data = await self._request(
+            "POST", _JWT_MINT_PATH, payload={}, _auth_header=self._basic_header
+        )
+        token = (data or {}).get("token")
+        if not token:
+            raise PfSenseAuthError("auth/jwt did not return a token")
+        self._jwt = token
+
+    async def _ensure_jwt(self) -> None:
+        if self._jwt is None:
+            async with self._jwt_lock:
+                if self._jwt is None:
+                    await self._mint_jwt()
 
     async def _request(
         self,
@@ -116,17 +166,30 @@ class Client:
         *,
         params: dict | None = None,
         payload: dict | None = None,
+        _auth_header: str | None = None,
+        _retried: bool = False,
     ) -> Any:
         """Perform a request and return the unwrapped ``data`` field."""
         url = f"{self._base}{path}"
-        headers = {"x-api-key": self._api_key}
+        headers: dict[str, str] = {}
+
+        if _auth_header is not None:
+            headers["Authorization"] = _auth_header
+        elif self._auth_method == AUTH_API_KEY:
+            headers["x-api-key"] = self._api_key
+        elif self._auth_method == AUTH_BASIC:
+            headers["Authorization"] = self._basic_header
+        elif self._auth_method == AUTH_JWT:
+            await self._ensure_jwt()
+            headers["Authorization"] = f"Bearer {self._jwt}"
+
         try:
             async with self._session.request(
                 method,
                 url,
                 params=_flatten_params(params),
                 json=payload,
-                headers=headers,
+                headers=headers or None,
                 ssl=self._verify_ssl,
                 timeout=aiohttp.ClientTimeout(total=DEFAULT_TIMEOUT),
             ) as resp:
@@ -139,6 +202,23 @@ class Client:
             raise PfSenseConnectionError(f"timeout contacting {url}") from err
         except aiohttp.ClientError as err:
             raise PfSenseConnectionError(str(err)) from err
+        except PfSenseAuthError:
+            # A JWT can expire mid-session; mint a new one and retry once.
+            if (
+                self._auth_method == AUTH_JWT
+                and _auth_header is None
+                and not _retried
+                and path != _JWT_MINT_PATH
+            ):
+                self._jwt = None  # forces a re-mint on the retry
+                return await self._request(
+                    method,
+                    path,
+                    params=params,
+                    payload=payload,
+                    _retried=True,
+                )
+            raise
 
     @staticmethod
     def _unwrap(http_status: int, body: dict) -> Any:
@@ -632,6 +712,30 @@ class Client:
 
 
 # ---------------------------------------------------------------- helpers
+
+
+def client_from_config(
+    url: str,
+    session: aiohttp.ClientSession,
+    data: dict,
+    verify_ssl: bool,
+) -> Client:
+    """Build a :class:`Client` from a config-entry ``data`` mapping.
+
+    Reads ``auth_method`` (default ``"api_key"``) and the credential keys
+    (``api_key`` / ``username`` / ``password``). Shared by the integration
+    setup and the config flow so the auth branching lives in one place.
+    """
+    method = data.get("auth_method", AUTH_API_KEY)
+    return Client(
+        url,
+        session,
+        auth_method=method,
+        api_key=data.get("api_key"),
+        username=data.get("username"),
+        password=data.get("password"),
+        verify_ssl=verify_ssl,
+    )
 
 
 def _shq(value: str) -> str:

@@ -14,10 +14,18 @@ from homeassistant.const import PERCENTAGE, UnitOfTemperature, UnitOfTime
 DEFAULT_USERNAME = "admin"
 DOMAIN = "pfsense"
 
-# REST API v2 auth. The pre-2.x integration used username + password over
-# XML-RPC; v2 authenticates with an API key generated on the box at
-# System > REST API > Keys and sent as the ``x-api-key`` header.
+# REST API v2 auth. pfRest v2 accepts three mutually-exclusive schemes; the
+# config entry records which one it uses in ``CONF_AUTH_METHOD``.
+#   api_key -> ``x-api-key`` header (key generated at System > REST API > Keys)
+#   basic   -> HTTP Basic with a pfSense local username + password
+#   jwt     -> Bearer token minted from POST /api/v2/auth/jwt with those creds
 CONF_API_KEY = "api_key"
+CONF_AUTH_METHOD = "auth_method"
+
+AUTH_METHOD_API_KEY = "api_key"
+AUTH_METHOD_BASIC = "basic"
+AUTH_METHOD_JWT = "jwt"
+AUTH_METHODS = (AUTH_METHOD_API_KEY, AUTH_METHOD_BASIC, AUTH_METHOD_JWT)
 
 UNDO_UPDATE_LISTENER = "undo_update_listener"
 

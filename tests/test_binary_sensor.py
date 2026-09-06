@@ -72,7 +72,7 @@ def _entry(entry_id):
 async def _setup(hass, entry, client):
     entry.add_to_hass(hass)
     with (
-        patch("custom_components.pfsense.pfSenseClient", return_value=client),
+        patch("custom_components.pfsense.client_from_config", return_value=client),
         patch("custom_components.pfsense.async_load_cache", return_value=None),
         patch("custom_components.pfsense.async_save_cache"),
     ):

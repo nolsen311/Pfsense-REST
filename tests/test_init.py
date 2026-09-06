@@ -5,7 +5,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.pfsense.const import CONF_API_KEY, DOMAIN
+from custom_components.pfsense.const import (
+    AUTH_METHOD_API_KEY,
+    CONF_API_KEY,
+    CONF_AUTH_METHOD,
+    DOMAIN,
+)
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_URL, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
@@ -74,7 +79,7 @@ async def test_setup_and_unload_entry(hass: HomeAssistant):
 
     with (
         patch(
-            "custom_components.pfsense.pfSenseClient",
+            "custom_components.pfsense.client_from_config",
             return_value=_full_client_mock(),
         ),
         patch("custom_components.pfsense.async_load_cache", return_value=None),
@@ -112,9 +117,44 @@ async def test_migrate_v2_password_entry_requires_reauth(hass: HomeAssistant):
     assert await hass.config_entries.async_setup(entry.entry_id) is False
     await hass.async_block_till_done()
 
-    assert entry.version == 3
+    assert entry.version == 4
+    assert entry.data[CONF_AUTH_METHOD] == AUTH_METHOD_API_KEY
     assert "password" not in entry.data
     assert "username" not in entry.data
     assert CONF_API_KEY not in entry.data
     flows = hass.config_entries.flow.async_progress()
     assert any(f["context"]["source"] == "reauth" for f in flows)
+
+
+@pytest.mark.asyncio
+async def test_migrate_v3_stamps_auth_method(hass: HomeAssistant):
+    """A v3 (api-key) entry gains auth_method=api_key and becomes v4."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=3,
+        title="router.local",
+        unique_id="abc",
+        data={
+            CONF_URL: "https://192.168.1.1:8444",
+            CONF_API_KEY: "k",
+            CONF_VERIFY_SSL: False,
+        },
+        options={"device_tracker_enabled": False},
+        entry_id="v3_entry",
+    )
+    entry.add_to_hass(hass)
+
+    with (
+        patch(
+            "custom_components.pfsense.client_from_config",
+            return_value=_full_client_mock(),
+        ),
+        patch("custom_components.pfsense.async_load_cache", return_value=None),
+        patch("custom_components.pfsense.async_save_cache"),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert entry.version == 4
+    assert entry.data[CONF_AUTH_METHOD] == AUTH_METHOD_API_KEY
+    assert entry.data[CONF_API_KEY] == "k"
