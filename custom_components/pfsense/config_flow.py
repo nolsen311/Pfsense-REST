@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from urllib.parse import urlparse
 
+import homeassistant.helpers.config_validation as cv
+import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import (
     CONF_NAME,
@@ -14,9 +16,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-import homeassistant.helpers.config_validation as cv
 from homeassistant.util import slugify
-import voluptuous as vol
 
 from .const import (
     CONF_API_KEY,
@@ -116,7 +116,7 @@ class ConfigFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "cannot_connect_ssl"
                 else:
                     errors["base"] = "cannot_connect"
-            except Exception:  # noqa: BLE001
+            except Exception:
                 _LOGGER.exception("Unexpected error validating pfSense connection")
                 errors["base"] = "unknown"
 
@@ -169,7 +169,7 @@ class ConfigFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "privilege_missing"
             except (PfSenseConnectionError, PfSenseNotFoundError):
                 errors["base"] = "cannot_connect"
-            except Exception:  # noqa: BLE001
+            except Exception:
                 _LOGGER.exception("Unexpected error during pfSense reauth")
                 errors["base"] = "unknown"
             else:

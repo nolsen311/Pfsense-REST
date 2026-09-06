@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import copy
-from datetime import timedelta
 import logging
 import re
 import time
-from typing import Callable
+from collections.abc import Callable
+from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
@@ -21,12 +21,12 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
     UpdateFailed,
 )
-from homeassistant.helpers.storage import Store
 
 from .const import (
     CONF_API_KEY,
@@ -187,9 +187,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         except (PfSenseAuthError, PfSensePrivilegeError) as err:
             raise ConfigEntryAuthFailed(str(err)) from err
         except Exception as err:  # noqa: BLE001 - any poll error -> use cache
-            _LOGGER.warning(
-                "pfSense poll failed (%s); trying the local cache", err
-            )
+            _LOGGER.warning("pfSense poll failed (%s); trying the local cache", err)
             cached_data = await async_load_cache(hass, entry.entry_id)
             if cached_data:
                 data._state = cached_data

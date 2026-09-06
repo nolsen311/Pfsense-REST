@@ -70,9 +70,7 @@ def _entry(entry_id):
 async def _setup(hass, entry, client):
     entry.add_to_hass(hass)
     with (
-        patch(
-            "custom_components.pfsense.pfSenseClient", return_value=client
-        ),
+        patch("custom_components.pfsense.pfSenseClient", return_value=client),
         patch("custom_components.pfsense.async_load_cache", return_value=None),
         patch("custom_components.pfsense.async_save_cache"),
     ):
@@ -88,9 +86,7 @@ async def test_carp_sensor_on(hass: HomeAssistant, mock_pfsense_client):
     coordinator = hass.data[DOMAIN]["carp_on"][COORDINATOR]
     assert coordinator.data["carp_status"] is True
     # Notices have no REST endpoint; that binary sensor no longer exists.
-    assert (
-        hass.states.get("binary_sensor.router_local_pending_notices_present") is None
-    )
+    assert hass.states.get("binary_sensor.router_local_pending_notices_present") is None
     assert hass.states.get("binary_sensor.router_local_carp_status") is not None
 
 

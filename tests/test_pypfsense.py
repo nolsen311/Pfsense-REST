@@ -8,10 +8,10 @@ from aioresponses import aioresponses
 
 from custom_components.pfsense.pypfsense import (
     Client,
+    PfSenseAPIError,
     PfSenseAuthError,
     PfSenseNotFoundError,
     PfSensePrivilegeError,
-    PfSenseAPIError,
     _build_telemetry,
     dict_get,
 )
@@ -51,8 +51,14 @@ def test_base_url_strips_path():
 
 async def test_request_unwraps_data(client):
     with aioresponses() as m:
-        m.get(f"{API}/system/hostname", payload=_envelope({"hostname": "pf", "domain": "lan"}))
-        assert await client._get("/system/hostname") == {"hostname": "pf", "domain": "lan"}
+        m.get(
+            f"{API}/system/hostname",
+            payload=_envelope({"hostname": "pf", "domain": "lan"}),
+        )
+        assert await client._get("/system/hostname") == {
+            "hostname": "pf",
+            "domain": "lan",
+        }
 
 
 @pytest.mark.parametrize(
@@ -69,7 +75,9 @@ async def test_error_codes_map_to_exceptions(client, code, exc):
         m.get(
             f"{API}/system/hostname",
             status=code,
-            payload=_envelope([], code=code, status="err", response_id="X", message="nope"),
+            payload=_envelope(
+                [], code=code, status="err", response_id="X", message="nope"
+            ),
         )
         with pytest.raises(exc):
             await client._get("/system/hostname")
@@ -114,16 +122,23 @@ async def test_carp_status_reduces_to_bool(client):
 
 def _patch_body(m):
     return next(
-        r for (method, url), reqs in m.requests.items()
-        for r in reqs if method == "PATCH"
+        r
+        for (method, url), reqs in m.requests.items()
+        for r in reqs
+        if method == "PATCH"
     ).kwargs["json"]
 
 
 async def test_disable_filter_rule_patches_then_applies(client):
     rules = [
         {"id": 4, "tracker": 111, "disabled": False, "descr": "r"},
-        {"id": 5, "tracker": 222, "disabled": False, "descr": "r2",
-         "statetype": "keep state"},
+        {
+            "id": 5,
+            "tracker": 222,
+            "disabled": False,
+            "descr": "r2",
+            "statetype": "keep state",
+        },
     ]
     with aioresponses() as m:
         m.get(f"{API}/firewall/rules", payload=_envelope(rules))
@@ -193,9 +208,7 @@ async def test_build_telemetry_shape():
         {"name": "lan", "descr": "LAN", "inbytes": 5},
     ]
     gateways = [{"name": "WAN_DHCP", "delay": 1.2, "status": "online"}]
-    ovpn = [
-        {"vpnid": 1, "name": "S", "conns": [{"bytes_recv": 100, "bytes_sent": 50}]}
-    ]
+    ovpn = [{"vpnid": 1, "name": "S", "conns": [{"bytes_recv": 100, "bytes_sent": 50}]}]
     t = _build_telemetry(system, interfaces, gateways, ovpn)
     assert t["wan_ip"] == "1.2.3.4"
     assert t["cpu"]["used_percent"] == 12.5

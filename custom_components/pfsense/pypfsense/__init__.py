@@ -211,14 +211,18 @@ class Client:
         ``interfaces.{name}.{counter}``, ``gateways.{name}.{prop}``,
         ``openvpn.servers.{vpnid}.{prop}``, ``cpu.*``, ``system.*``, ``wan_ip``.
         """
-        system, interfaces, gateways, ovpn_servers, gateways_detail = (
-            await asyncio.gather(
-                self._get("/status/system"),
-                self._get("/status/interfaces"),
-                self._get("/status/gateways"),
-                self._get("/status/openvpn/servers"),
-                self.get_gateways_detail(),
-            )
+        (
+            system,
+            interfaces,
+            gateways,
+            ovpn_servers,
+            gateways_detail,
+        ) = await asyncio.gather(
+            self._get("/status/system"),
+            self._get("/status/interfaces"),
+            self._get("/status/gateways"),
+            self._get("/status/openvpn/servers"),
+            self.get_gateways_detail(),
         )
         return _build_telemetry(
             system, interfaces, gateways, ovpn_servers, gateways_detail
@@ -243,13 +247,17 @@ class Client:
                 return svc
         return None
 
-    async def start_service(self, service_name: str, service: dict | None = None) -> None:
+    async def start_service(
+        self, service_name: str, service: dict | None = None
+    ) -> None:
         svc = service if isinstance(service, dict) and "id" in service else None
         svc = svc or await self._find_service(service_name)
         if svc:
             await self._service_action(svc, "start")
 
-    async def stop_service(self, service_name: str, service: dict | None = None) -> None:
+    async def stop_service(
+        self, service_name: str, service: dict | None = None
+    ) -> None:
         svc = service if isinstance(service, dict) and "id" in service else None
         svc = svc or await self._find_service(service_name)
         if svc:
@@ -496,9 +504,7 @@ class Client:
     # --------------------------------------------------------- state table
 
     async def reset_state_table(self) -> None:
-        await self._request(
-            "DELETE", "/firewall/states", params={"limit": 0}
-        )
+        await self._request("DELETE", "/firewall/states", params={"limit": 0})
 
     async def kill_states(self, source: str, destination: str | None = None) -> None:
         cmd = f"/sbin/pfctl -k {_shq(source)}"

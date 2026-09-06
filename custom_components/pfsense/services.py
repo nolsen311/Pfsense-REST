@@ -1,11 +1,11 @@
 import logging
 
+import voluptuous as vol
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import async_get_platforms
 from homeassistant.helpers.service import entity_service_call
-import voluptuous as vol
 
 from .const import (
     DOMAIN,
@@ -61,9 +61,7 @@ class ServiceRegistrar:
         ):
             """Dynamic extension mapping runtime command parameters directly to the Client interface."""
             client = self_entity._get_pfsense_client()
-            await client.update_alias_address(
-                alias_name, address, action, kill_states
-            )
+            await client.update_alias_address(alias_name, address, action, kill_states)
 
         if not hasattr(PfSenseEntity, "service_update_alias"):
             PfSenseEntity.service_update_alias = service_update_alias

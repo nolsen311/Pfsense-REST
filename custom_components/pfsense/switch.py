@@ -60,7 +60,7 @@ async def async_setup_entry(
                     config_entry,
                     coordinator,
                     SwitchEntityDescription(
-                        key="filter.{}".format(tracker),
+                        key=f"filter.{tracker}",
                         name="Filter Rule {} ({})".format(
                             tracker, rule.get("descr", "")
                         ),
@@ -99,7 +99,7 @@ async def async_setup_entry(
                         config_entry,
                         coordinator,
                         SwitchEntityDescription(
-                            key="{}.{}".format(rule_type, tracker),
+                            key=f"{rule_type}.{tracker}",
                             name="{} {} ({})".format(
                                 label, tracker, rule.get("descr", "")
                             ),
@@ -190,7 +190,7 @@ class PfSenseSwitch(PfSenseEntity, SwitchEntity):
             return
         try:
             await self._get_pfsense_client().kill_states_for_rule(rule)
-        except Exception:  # noqa: BLE001 - best effort; never fail the toggle
+        except Exception:
             _LOGGER.warning("failed to kill states for toggled rule", exc_info=True)
 
 
@@ -330,9 +330,10 @@ class PfSenseServiceSwitch(PfSenseSwitch):
             if service_name.startswith("openvpn"):
                 # [ "openvpn", "<vpnid>""]
                 parts = service_name.split("-")
-                if service["name"] == parts[0] and str(
-                    service.get("vpnid")
-                ) == parts[1]:
+                if (
+                    service["name"] == parts[0]
+                    and str(service.get("vpnid")) == parts[1]
+                ):
                     found = service
             elif service["name"] == service_name:
                 found = service
