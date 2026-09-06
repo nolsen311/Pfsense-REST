@@ -12,5 +12,5 @@
   "requirements": [
     "mac-vendor-lookup>=0.1.11"
   ],
-  "version": "3.0.0"
+  "version": "0.10.0"
 }
