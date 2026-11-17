@@ -11,9 +11,11 @@ from custom_components.pfsense.const import (
     CONF_AUTH_METHOD,
     DOMAIN,
 )
+from homeassistant.components.update import UpdateEntityFeature
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_URL, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 
 
 @pytest.fixture(autouse=True)
@@ -194,6 +196,111 @@ async def test_migrate_v4_stamps_backend(hass: HomeAssistant):
 
     assert entry.version == 5
     assert entry.data == {**data, "backend": "pfrest"}
+
+
+def _netgate_entry(options: dict | None = None) -> MockConfigEntry:
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=5,
+        title="router.local",
+        unique_id="abc",
+        data={
+            CONF_URL: "https://192.168.1.1:8443",
+            "backend": "netgate",
+            "auth_method": "netgate",
+            "username": "u",
+            "password": "p",
+            CONF_VERIFY_SSL: False,
+        },
+        options={"device_tracker_enabled": False, **(options or {})},
+    )
+
+
+async def _setup(hass, entry, client):
+    entry.add_to_hass(hass)
+    with (
+        patch("custom_components.pfsense.client_from_config", return_value=client),
+        patch("custom_components.pfsense.async_load_cache", return_value=None),
+        patch("custom_components.pfsense.async_save_cache"),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+UPDATE_ENTITY = "update.router_local_firmware_updates_available"
+_UPDATE_INFO = {"base": {"installed_version": "26.07", "version": "26.10"}}
+
+
+@pytest.mark.asyncio
+async def test_install_is_opt_in(hass: HomeAssistant):
+    """Without the option there is no Install feature and no warning."""
+    client = _full_client_mock()
+    client.get_firmware_update_info.return_value = _UPDATE_INFO
+    entry = _netgate_entry()
+    await _setup(hass, entry, client)
+    state = hass.states.get(UPDATE_ENTITY)
+    assert not state.attributes["supported_features"] & UpdateEntityFeature.INSTALL
+    assert state.attributes["release_summary"] is None
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call(
+            "update", "install", {"entity_id": UPDATE_ENTITY}, blocking=True
+        )
+    client.start_firmware_update.assert_not_called()
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.asyncio
+async def test_install_when_enabled_warns_and_tracks_progress(hass: HomeAssistant):
+    """Opted in: warning shown, install starts, in progress until the version moves."""
+    client = _full_client_mock()
+    client.get_firmware_update_info.return_value = _UPDATE_INFO
+    entry = _netgate_entry({"firmware_install_unverified": True})
+    await _setup(hass, entry, client)
+
+    state = hass.states.get(UPDATE_ENTITY)
+    assert state.attributes["supported_features"] & UpdateEntityFeature.INSTALL
+    assert "not been verified" in state.attributes["release_summary"]
+
+    await hass.services.async_call(
+        "update", "install", {"entity_id": UPDATE_ENTITY}, blocking=True
+    )
+    client.start_firmware_update.assert_awaited_once()
+    assert hass.states.get(UPDATE_ENTITY).attributes["in_progress"] is True
+
+    client.get_firmware_update_info.return_value = {
+        "base": {"installed_version": "26.10", "version": "26.10"}
+    }
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    state = hass.states.get(UPDATE_ENTITY)
+    assert state.attributes["in_progress"] is False
+    assert state.attributes["installed_version"] == "26.10"
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.asyncio
+async def test_install_option_ignored_for_pfrest(hass: HomeAssistant):
+    """The option never adds Install to a pfrest entry."""
+    client = _full_client_mock()
+    client.get_firmware_update_info.return_value = _UPDATE_INFO
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=5,
+        title="router.local",
+        unique_id="abc",
+        data={
+            CONF_URL: "https://192.168.1.1:8444",
+            CONF_API_KEY: "k",
+            "backend": "pfrest",
+            "auth_method": "api_key",
+        },
+        options={"device_tracker_enabled": False, "firmware_install_unverified": True},
+    )
+    await _setup(hass, entry, client)
+    state = hass.states.get(UPDATE_ENTITY)
+    assert not state.attributes["supported_features"] & UpdateEntityFeature.INSTALL
+    assert await hass.config_entries.async_unload(entry.entry_id)
 
 
 @pytest.mark.asyncio

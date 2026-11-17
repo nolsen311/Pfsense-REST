@@ -380,3 +380,42 @@ async def test_exec_command_non_base64_response(client) -> None:
         m.post(f"{API}/login", payload={"token": _jwt()})
         m.post(f"{API}/diag/cmd/shell", payload={"response": "not base64!"})
         assert await client.exec_command("x") == "not base64!"
+
+
+async def test_start_firmware_update(client) -> None:
+    """Upgrade starts on the current branch; status is re-read every minute after."""
+    status = {
+        "firmware_branch": "26.07",
+        "curr_base_system": "26.07",
+        "latest_base_system": "26.10",
+    }
+    with aioresponses() as m:
+        m.post(f"{API}/login", payload={"token": _jwt()})
+        m.get(f"{API}/system/update", payload=status, repeat=True)
+        m.post(
+            f"{API}/system/update", exception=aiohttp.ServerDisconnectedError()
+        )  # box goes down: still started
+        await client.start_firmware_update()
+        (call,) = _calls(m, "POST", f"{API}/system/update")
+        assert call.kwargs["json"] == {"firmware_branch": "26.07"}
+        assert client._upgrade_from == "26.07"
+
+        await client.get_firmware_update_info()  # not served from the old cache
+        gets = len(_calls(m, "GET", f"{API}/system/update"))
+        client._update_info = (client._update_info[0] - 61, client._update_info[1])
+        await client.get_firmware_update_info()  # 60 s TTL while upgrading
+        assert len(_calls(m, "GET", f"{API}/system/update")) == gets + 1
+
+
+async def test_upgrade_tracking_ends_when_version_changes(client) -> None:
+    """Once the installed version changes, the hourly cache is back."""
+    client._upgrade_from = "26.07"
+    with aioresponses() as m:
+        m.post(f"{API}/login", payload={"token": _jwt()})
+        m.get(
+            f"{API}/system/update",
+            payload={"curr_base_system": "26.10", "latest_base_system": "26.10"},
+        )
+        info = await client.get_firmware_update_info()
+    assert info["base"]["installed_version"] == "26.10"
+    assert client._upgrade_from is None

@@ -299,3 +299,15 @@ async def test_build_telemetry_shape():
     assert t["gateways"]["WAN_DHCP"]["status"] == "online"
     assert t["openvpn"]["servers"]["1"]["connected_client_count"] == 1
     assert t["openvpn"]["servers"]["1"]["total_bytes_recv"] == 100
+
+
+async def test_pfrest_firmware_upgrade_is_unsupported() -> None:
+    """The REST API package backend cannot upgrade the base system."""
+    from custom_components.pfsense.pypfsense import (  # noqa: PLC0415
+        PfRestClient,
+        PfSenseUnsupportedError,
+    )
+
+    client = PfRestClient("https://pf.example:8444", object(), api_key="k")
+    with pytest.raises(PfSenseUnsupportedError):
+        await client.start_firmware_update()

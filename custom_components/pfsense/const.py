@@ -70,6 +70,11 @@ CONF_DEVICES = "devices"
 
 CONF_RULE_SWITCH_KILL_STATES = "rule_switch_kill_states"
 DEFAULT_RULE_SWITCH_KILL_STATES = False
+# Opt-in gate for the firmware Install button (Netgate backend). The upgrade
+# path is built from the API spec and not yet verified on hardware; remove
+# this option once a real upgrade has been confirmed.
+CONF_FIRMWARE_INSTALL_UNVERIFIED = "firmware_install_unverified"
+DEFAULT_FIRMWARE_INSTALL_UNVERIFIED = False
 
 COUNT = "count"
 
