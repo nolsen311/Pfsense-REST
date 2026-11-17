@@ -377,6 +377,7 @@ _POLL_READS = (
     ("nat", "nat_outbound_rules", "get_nat_outbound_rules", []),
     ("firmware", "firmware_update_info", "get_firmware_update_info", None),
     ("packages", "packages", "get_installed_packages", []),
+    ("notices", "notices", "get_notices", None),
 )
 # Without these the device cannot be identified, so their failure fails the
 # whole poll (and the coordinator falls back to the cache).

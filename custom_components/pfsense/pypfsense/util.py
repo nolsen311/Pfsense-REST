@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 import re
 
 
@@ -73,3 +74,44 @@ def _flatten_params(params: dict | None) -> dict | None:
     if not params:
         return None
     return {k: str(v) for k, v in params.items() if v is not None}
+
+
+# pfSense keeps its notices (the web UI's bell) in PHP-serialized form; no API
+# endpoint exposes them, so both backends read them through their shell
+# endpoint with pfSense's own notices.inc. Output stays well under pfrest's
+# 1024-character command_prompt limit: a count plus the newest 3, trimmed.
+NOTICES_COMMAND = (
+    "php -r '"
+    'require_once("notices.inc"); '
+    "$n = get_notices(); if (!is_array($n)) { $n = []; } krsort($n); "
+    "$out = []; foreach (array_slice($n, 0, 3, true) as $id => $x) { "
+    '$out[] = ["id" => $id, "category" => $x["category"] ?? "", '
+    '"priority" => $x["priority"] ?? null, '
+    '"notice" => substr(strip_tags($x["notice"] ?? ""), 0, 120)]; } '
+    'echo json_encode(["count" => count($n), "latest" => $out], '
+    "JSON_INVALID_UTF8_SUBSTITUTE);'"
+)
+
+
+def parse_notices(output: str) -> dict:
+    """Parse :data:`NOTICES_COMMAND` output into ``{"count", "latest"}``.
+
+    Raises ``ValueError`` when the output isn't the expected JSON (no PHP,
+    an error message, a truncated reply).
+    """
+    text = (output or "").strip()
+    start = text.find("{")
+    data = json.loads(text[start:] if start >= 0 else text)
+    if not isinstance(data, dict) or not isinstance(data.get("count"), int):
+        raise ValueError("unexpected notices output")  # noqa: TRY004 - caller maps ValueError
+    latest = [
+        {
+            "id": n.get("id"),
+            "category": n.get("category") or None,
+            "priority": n.get("priority"),
+            "notice": n.get("notice") or "",
+        }
+        for n in data.get("latest") or []
+        if isinstance(n, dict)
+    ]
+    return {"count": data["count"], "latest": latest}

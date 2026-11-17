@@ -52,6 +52,7 @@ def mock_pfsense_client():
     client.get_nat_outbound_rules.return_value = []
     client.get_firmware_update_info.return_value = None
     client.get_installed_packages.return_value = []
+    client.get_notices.return_value = {"count": 0, "latest": []}
     return client
 
 
@@ -90,8 +91,9 @@ async def test_carp_sensor_on(hass: HomeAssistant, mock_pfsense_client):
 
     coordinator = hass.data[DOMAIN]["carp_on"][COORDINATOR]
     assert coordinator.data["carp_status"] is True
-    # Notices have no REST endpoint; that binary sensor no longer exists.
-    assert hass.states.get("binary_sensor.router_local_pending_notices_present") is None
+    # Notices are back (read through the shell), off with none pending.
+    notices = hass.states.get("binary_sensor.router_local_pending_notices_present")
+    assert notices.state == "off"
     assert hass.states.get("binary_sensor.router_local_carp_status") is not None
 
 
@@ -103,3 +105,32 @@ async def test_carp_sensor_off(hass: HomeAssistant, mock_pfsense_client):
 
     coordinator = hass.data[DOMAIN]["carp_off"][COORDINATOR]
     assert coordinator.data["carp_status"] is False
+
+
+@pytest.mark.asyncio
+async def test_pending_notices_sensor(hass: HomeAssistant, mock_pfsense_client):
+    """Pending notices turn the sensor on, with the newest ones as attributes."""
+    latest = [
+        {"id": 1794900000, "category": "PHP errors", "priority": 1, "notice": "x"}
+    ]
+    mock_pfsense_client.get_notices.return_value = {"count": 27, "latest": latest}
+    await _setup(hass, _entry("notices_on"), mock_pfsense_client)
+    state = hass.states.get("binary_sensor.router_local_pending_notices_present")
+    assert state.state == "on"
+    assert state.attributes["pending_count"] == 27
+    assert state.attributes["latest_notices"] == latest
+
+
+@pytest.mark.asyncio
+async def test_pending_notices_unavailable_without_shell(
+    hass: HomeAssistant, mock_pfsense_client
+):
+    """When notices cannot be read, the sensor is unavailable, not 'off'."""
+    from custom_components.pfsense.pypfsense import (  # noqa: PLC0415
+        PfSenseUnsupportedError,
+    )
+
+    mock_pfsense_client.get_notices.side_effect = PfSenseUnsupportedError("no shell")
+    await _setup(hass, _entry("notices_off"), mock_pfsense_client)
+    state = hass.states.get("binary_sensor.router_local_pending_notices_present")
+    assert state.state == "unavailable"

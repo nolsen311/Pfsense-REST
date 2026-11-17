@@ -42,6 +42,16 @@ async def async_setup_entry(
                 ),
                 True,
             ),
+            PfSensePendingNoticesBinarySensor(
+                config_entry,
+                coordinator,
+                BinarySensorEntityDescription(
+                    key="notices.pending_notices_present",
+                    name="Pending Notices Present",
+                    icon="mdi:bell-alert",
+                ),
+                True,
+            ),
             PfSenseApiConnectedBinarySensor(
                 config_entry,
                 coordinator,
@@ -108,3 +118,31 @@ class PfSenseCarpStatusBinarySensor(PfSenseBinarySensor):
             return state["carp_status"]
         except KeyError:
             return STATE_UNKNOWN
+
+
+class PfSensePendingNoticesBinarySensor(PfSenseBinarySensor):
+    """On while pfSense has notices pending (the web UI's bell icon)."""
+
+    @property
+    def _notices(self) -> dict | None:
+        notices = (self.coordinator.data or {}).get("notices")
+        return notices if isinstance(notices, dict) else None
+
+    @property
+    def available(self):
+        """Unavailable when the backend cannot read notices (no shell/PHP)."""
+        return self._notices is not None and super().available
+
+    @property
+    def is_on(self):
+        """Return true while any notice is pending."""
+        return bool((self._notices or {}).get("count"))
+
+    @property
+    def extra_state_attributes(self):
+        """The pending count and the newest notices."""
+        notices = self._notices or {}
+        return {
+            "pending_count": notices.get("count", 0),
+            "latest_notices": notices.get("latest", []),
+        }
