@@ -150,6 +150,19 @@ want in the entity settings.
   base-system "update available" signal or progress-tracked upgrade, so this
   entity reports status only and cannot install.
 
+### Health (diagnostic)
+
+Shown under the device's **Diagnostic** section, and they stay available while
+the firewall is unreachable:
+
+- **Integration Status** – `ok`, `degraded` (some data could not be read),
+  `unreachable`, `tls_error`, `auth_failed`, `privilege_missing`,
+  `api_missing`, `api_error`. Attributes list which checks fail and why.
+- **API Connected** – whether the latest poll got live data.
+- **Last Successful Poll** – timestamp.
+- **API Latency** – poll duration in ms (disabled by default).
+- **Run Health Check** – button that polls immediately.
+
 ---
 
 ## Services
@@ -234,6 +247,34 @@ Writes stage a change and then call the matching apply endpoint
 (`POST /api/v2/firewall/apply`, `/routing/apply`), serialised so concurrent
 applies cannot race. The device's unique ID is the pfSense **Netgate device ID**
 from `/api/v2/status/system`.
+
+---
+
+## Troubleshooting
+
+When something stops working, look at **Settings › Repairs** first. The
+integration raises a repair for each problem it can identify, and says how to
+fix it. Repairs clear themselves after the next successful poll.
+
+| Repair | Usual cause | Fix |
+| --- | --- | --- |
+| *pfSense is not reachable* | Firewall down, wrong URL/port, or a firewall rule blocking the HA host. | Check the URL opens from the HA host. The anti-lockout rule only covers the web GUI port; the Netgate API port (usually 8443) needs its own LAN pass rule. |
+| *TLS certificate not trusted* | Self-signed certificate with **Verify SSL** on. | Install a trusted certificate, or re-add the integration with Verify SSL off. |
+| *pfSense API not found* | Package not installed/enabled, or wrong port. | Install/enable the REST API package and include its port in the URL. |
+| *missing API privileges* | The account cannot read some endpoints. Only those parts stop updating. | Grant the listed privileges in System › User Manager. |
+| *API is returning errors* | Firewall-side failure. | Check the firewall's system log; open an issue with a diagnostics download. |
+| *REST API package is end-of-life* | Warning only. Netgate's built-in API is running on this firewall. | Nothing yet; see issue #11 for the migration. |
+
+Wrong credentials are handled by Home Assistant's re-authenticate prompt
+rather than a repair.
+
+**Short outages:** after a failed poll the entities keep their last values
+for up to 10 minutes (or 5 scan intervals, whichever is longer). After that
+they become unavailable, so old numbers are never shown as current.
+
+**Bug reports:** attach **Settings › Devices & services › pfSense › ⋮ ›
+Download diagnostics**. It contains the health state, versions and entity
+counts. Credentials, the URL, IP and MAC addresses are redacted.
 
 ---
 

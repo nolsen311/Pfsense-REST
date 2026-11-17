@@ -156,6 +156,34 @@ any significant feature work.
   deleting those comments resets it to a fresh baseline. A failing source
   keeps its old value and fails the run.
 
+## Health checks (issue #14)
+
+- `health.py` holds a per-entry `HealthTracker` (`hass.data[DOMAIN][entry_id][HEALTH]`).
+  `PfSenseData.update()` runs the reads in `_POLL_READS` with
+  `gather(return_exceptions=True)`. A failed read keeps its previous value (or
+  an empty default) and is recorded as a failed *check*. Only auth errors and
+  failures of the core identity reads (`_CORE_KEYS`) fail the whole poll.
+- **403 no longer starts reauth.** `PfSensePrivilegeError` degrades the
+  affected check and raises a `privilege_missing` repair. Only
+  `PfSenseAuthError` raises `ConfigEntryAuthFailed`.
+- On a failed poll, the on-disk cache is served only while it is younger than
+  `stale_after` (max(600 s, 5 × scan interval)). At startup any cache is
+  served, so the entry still loads. Past that limit the poll raises `UpdateFailed`.
+- `telemetry_update_time` in the poll state records when telemetry was really
+  fetched, so rate math stays correct when telemetry was reused.
+- Health entities subscribe to the tracker (`async_add_listener`), not just the
+  coordinator, because HA skips listener updates for back-to-back failed
+  refreshes.
+- Poll-level repairs need `FAILURES_BEFORE_ISSUE` (3) consecutive failures.
+  `pfrest_eol` fires when a pfrest entry sees the `pfnet-controller` service
+  running (verified on the live box). Error kinds come from `classify()`; the
+  Netgate backend must raise the same `PfSense*Error` types.
+- `diagnostics.py` redacts credentials/URL and scrubs IPs, MACs and URLs from
+  error text.
+- The `Error unloading entry` / `KeyError: 'pfsense'` noise in
+  `test_config_flow.py` output predates this. Those tests create entries
+  without patching setup.
+
 ## Upstream (DonTranQuiL/Pfsense-pro) sync log
 
 Upstream is still XML-RPC, so its code changes rarely port. Last reviewed at
@@ -165,10 +193,9 @@ upstream `17c399c` (2026-11-05); fork point was `89ccddc` (2026-06-17).
   Marketplace install section of the README, the GitHub Actions major bumps
   (checkout/setup-python v7, cache v6, stale v11) and the stale bot's
   `exempt-pr-labels: dependencies`.
-- **Not applicable:** the null-`get_config()` guard (upstream #9) — our
-  coordinator either returns a fully-populated state from one
-  `asyncio.gather` or the cached state, so `services` / rule lists are never
-  `None`; upstream's `ruff.toml` ignore list (we run the full HA rule set);
+- **Not applicable:** the null-`get_config()` guard (upstream #9) — a failed
+  read keeps its previous value or an empty default (see "Health checks"), so
+  `services` / rule lists are never `None`; upstream's `ruff.toml` ignore list (we run the full HA rule set);
   the `ai_engineer/` workflows (removed here, later removed upstream too).
 - **Skipped by choice:** Discord release announcements, Liberapay
   `FUNDING.yml`, the `www/pfsense-command-center.js` Lovelace card (it reads

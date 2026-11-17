@@ -15,6 +15,7 @@ from homeassistant.util import slugify
 
 from . import CoordinatorEntityManager, PfSenseEntity
 from .const import COORDINATOR, DOMAIN
+from .health_entity import PfSenseApiConnectedBinarySensor
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,7 +41,14 @@ async def async_setup_entry(
                     icon="mdi:gauge",
                 ),
                 True,
-            )
+            ),
+            PfSenseApiConnectedBinarySensor(
+                config_entry,
+                coordinator,
+                "api_connected",
+                "API Connected",
+                "mdi:lan-connect",
+            ),
         ]
 
     cem = CoordinatorEntityManager(
