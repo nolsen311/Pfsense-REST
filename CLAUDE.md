@@ -217,6 +217,50 @@ Verified against the live 26.07 box:
   - **Latency:** a full poll takes ~9 s (rules ~1.5 s per interface, NAT
     ~1.5 s each, `/system/status` ~2 s; the box partly serializes them).
     Keep the scan interval ≥ 30 s.
+- **Writes (phase 4)**, verified on the live box on 2026-11-17 with the
+  user's approval for each test:
+  - **Rule toggles:** `POST /firewall/rules/interface/{if}/toggle/{id}
+    {"value": true}` disables and `false` enables. The firewall reloads
+    straight away and nothing is left dirty. `POST /system/config/dirty
+    {"apply": true}` still runs after each write and is harmless when
+    nothing is pending. NAT toggles use the same body (from the spec, not
+    tested live).
+  - **Aliases:** entries are `targets: [{name: <address>, descr}]`. The
+    `address`/`detail` strings are always empty, and **are ignored on write**.
+    `PUT /aliases` creates, `POST /aliases/{id}` updates (`id` = list index,
+    a string), `DELETE /aliases/{id}` deletes. pf only loads an alias that a
+    rule references, so `pfctl -t <alias> -T show` fails for an unused one.
+  - **States:**
+    - `DELETE /diag/states` rejects `srcip` without `dstip` (400 "dstip not
+      specified").
+    - `filter_str` is a substring match.
+    - So `kill_states` lists the states with `GET /diag/states?filter_str=<ip>`
+      (entries carry bare `src`/`dst` IPs), keeps the exact matches and
+      deletes each `srcip`+`dstip` pair. That pair DELETE has not been run
+      against a real state yet.
+    - `reset_state_table` runs `pfctl -F states` through the shell, because
+      it's unclear what an unfiltered DELETE does.
+  - **Shell:** `POST /diag/cmd/shell {cmd: base64, timeout}`. The
+    `response` is **base64** too, and errors come back in-band as text.
+    Needs the shell privilege.
+  - **Service control and WOL:** Nexus has no endpoint for either, so both go
+    through the shell:
+    - `pfSsh.php playback svc <action> <name>` (verified: restarting ntpd
+      gave it a new PID);
+    - `/usr/local/bin/wol -i <broadcast> <mac>` (the broadcast address is
+      worked out from `/system/interfaces/status`).
+  - **ARP:** `DELETE /diag/arp/{ip}` returns success for an IP that isn't
+    in the table.
+  - **Default gateway:** the `/system/gateways` GET returns `{defaults:
+    {defaultgw4, defaultgw6}, gateways: [...]}` (no `id`), and the defaults
+    are gateway `name`s. The PUT `/system/gateways/{index}` with `defaults`
+    is from the spec. **LIVE-CHECK**: the box has one gateway, so the switch
+    itself can't be tested.
+  - **Reboot/halt:** `POST /diag/control {action: reboot|rebootfsck|halt}`,
+    from the spec and not run. A dropped connection counts as success.
+  - **Rule state kill:** Nexus rule `source`/`destination` are
+    `{address, network, any, not, alias_id, port, label}`. Interface macros
+    are in `network` and skipped; hosts and alias host targets are killed.
 - `_get_shared()` dedupes concurrent GETs of one path for 5 s.
   `/system/status` feeds several methods.
 - Config flow: menu option `netgate` (`auth_method: netgate`,
