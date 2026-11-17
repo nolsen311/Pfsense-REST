@@ -1,9 +1,11 @@
 # pfSense-REST
 
-A Home Assistant integration for pfSense® firewalls, built on the **pfSense REST
-API v2** (`pfSense-pkg-RESTAPI`). It surfaces live system, interface, gateway,
-DHCP and VPN telemetry as entities, and lets you drive firewall rules, NAT
-rules, services, aliases and routing from Home Assistant.
+A Home Assistant integration for pfSense® firewalls. It connects through
+**Netgate's built-in pfSense API** (recommended, pfSense 26.07 and newer) or the
+community **REST API v2 package** (`pfSense-pkg-RESTAPI`). It surfaces live
+system, interface, gateway, DHCP and VPN telemetry as entities, and lets you
+drive firewall rules, NAT rules, services, aliases and routing from Home
+Assistant.
 
 > **Origin.** This project started as a fork of
 > [DonTranQuiL/Pfsense-pro](https://github.com/DonTranQuiL/Pfsense-pro), but has
@@ -24,27 +26,33 @@ rules, services, aliases and routing from Home Assistant.
 
 ## Requirements
 
-- **pfSense 26.07 or newer** with the **REST API v2 package** installed and enabled
-  (System › Package Manager, then System › REST API).
-- An **API key** created at **System › REST API › Keys**, tied to a user that has
-  the privileges the integration needs. `WebCfg - All pages` grants everything; a
-  locked-down user needs read access to system/interface/gateway/service/DHCP
-  status plus write access to whatever you intend to control (firewall rules,
-  aliases, services, routing).
-- The API's base URL, **including its port** (the REST API commonly runs on a
-  non-standard port such as `8444`, separate from the web UI).
+**pfSense 26.07 or newer**, and one of:
 
-> This integration speaks REST v2 only. pfSense installs without the REST API
-> package, or older than the version it requires, are not supported.
+- **Netgate API (recommended).** pfSense's built-in API, served by the Netgate
+  (Nexus) controller service. It is standard on every install from 26.10.
+  - A pfSense user that can log in to it: a member of `admins`, or of the
+    `mim_<read|modify|delete>_<role>` groups for what you want to use. Service
+    control, Wake-on-LAN, state-table reset and `exec_command` also need shell
+    access.
+  - The API URL **with its port**, usually `https://<firewall>:8443`.
+  - **A LAN pass rule from the Home Assistant host to that port.** pfSense's
+    anti-lockout rule covers only the web UI port, so without this rule the
+    connection just times out.
+- **REST API package.** The community `pfSense-pkg-RESTAPI` v2 (System ›
+  Package Manager, then System › REST API).
+  - An API key from **System › REST API › Keys**, or a user for HTTP Basic or
+    JWT login. The user needs read access to system, interface, gateway,
+    service and DHCP status, plus write access to what you want to control.
+    `WebCfg - All pages` grants everything.
+  - The API URL with its port, often a non-standard one such as `8444`.
 
 > [!WARNING]
-> **The REST API package is entering end of life.** Netgate is building a native
-> API into pfSense (starting with 26.10) and plans to remove the PHP codebase
-> the community REST API package depends on at some point after 26.10. The
-> package is now in maintenance mode — see
+> **The REST API package is entering end of life.** Netgate is merging pfSense
+> CE and Plus from 26.10 and will remove the PHP code the package depends on
+> some time after that. See
 > [pfrest discussion #962](https://github.com/pfrest/pfSense-pkg-RESTAPI/discussions/962).
-> This integration keeps working for as long as the package does; migration to
-> Netgate's official API is tracked in this repo's issues.
+> New setups should use the Netgate API. To move an existing entry, see
+> [Switching to the Netgate API](#switching-to-the-netgate-api).
 
 ---
 
@@ -85,23 +93,37 @@ a Marketplace search. Add it by link instead:
 
 ## Configuration
 
-When you add the integration you are asked for:
+When you add the integration, first choose how it connects:
 
-| Field | Notes |
-| --- | --- |
-| **URL** | Base URL of the REST API, with scheme and port, e.g. `https://pfsense.lan:8444`. Any path is ignored. |
-| **API key** | The key value from System › REST API › Keys. Sent as the `x-api-key` header. |
-| **Verify SSL certificate** | Turn off for a self-signed certificate. |
-| **Firewall Name** | Optional friendly name; defaults to `hostname.domain`. |
+- **Netgate API**: enter the **URL** (e.g. `https://pfsense.lan:8443`), the
+  pfSense **username** and **password**. The integration logs in and renews its
+  session token itself.
+- **REST API package**, with an **API key**, **username and password** (HTTP
+  Basic), or **JWT**. Enter the **URL** (e.g. `https://pfsense.lan:8444`) and
+  the matching credentials. Basic and JWT have to be enabled at System › REST
+  API › Settings.
+
+Both also ask for **Verify SSL certificate** (turn it off for a self-signed
+certificate) and an optional **Firewall name** (defaults to `hostname.domain`).
+
+To change the URL, credentials or API later, use **⋮ › Reconfigure** on the
+entry. Entities and their history are kept.
 
 ### Options
 
 After setup, **Configure** exposes:
 
-- **Scan Interval** – how often the main state poll runs (default 30 s).
-- **Enable Device Tracker** – adds a second, slower poll of the ARP table and a
-  device picker so you can track specific MAC addresses.
-- **Device Tracker Scan Interval** / **Consider Home** – timing for the tracker.
+- **Scan Interval**: how often the main state poll runs. The default is 30 s.
+  On the Netgate API a full poll takes several seconds, so keep it at 30 s or
+  more.
+- **Enable Device Tracker**: adds a second, slower poll of the ARP table and a
+  device picker for choosing which MAC addresses to track.
+- **Device Tracker Scan Interval** / **Consider Home**: timing for the tracker.
+- **Reset matching states when a rule switch is toggled**: drops existing
+  connections for the rule's hosts, so the change takes effect at once.
+- **Allow firmware install from Home Assistant** (Netgate API only,
+  **experimental**): adds an Install button to the firmware update entity. See
+  [Update](#update).
 
 ---
 
@@ -114,6 +136,9 @@ want in the entity settings.
 
 - **System:** WAN IP address, CPU usage %, CPU count, memory usage %, swap usage
   %, memory-buffer usage %, system temperature, load average (1 / 5 / 15 min).
+  On the Netgate API, CPU usage is a one-minute average, and the 5- and
+  15-minute load averages are worked out from per-minute samples. Disk usage
+  has no Netgate API source.
 - **DHCP:** total leases, online leases, idle/offline leases.
 - **Per interface:** link status, in/out byte and packet counters (passed
   traffic) plus their kB/s and packets/s rates, interface errors, collisions.
@@ -146,9 +171,18 @@ want in the entity settings.
 
 ### Update
 
-- **Firmware Updates Available** – read-only. The REST API exposes no
-  base-system "update available" signal or progress-tracked upgrade, so this
-  entity reports status only and cannot install.
+- **Firmware Updates Available** shows the installed and latest pfSense
+  version, plus pfSense's own status message.
+  - Netgate API only. The REST API package has no source for it, so the entity
+    is unavailable there.
+  - The status is checked once an hour.
+  - **Install is experimental and off by default.** Turn on **Allow firmware
+    install from Home Assistant** in the options to get an Install button.
+    The upgrade has not been verified on hardware yet, and the entity shows a
+    warning saying so while the option is on.
+  - The firewall reboots during the upgrade, so Home Assistant loses its
+    connection until it's back. The entity shows "installing" until the new
+    version is reported.
 
 ### Health (diagnostic)
 
@@ -176,10 +210,14 @@ the firewall is unreachable:
 | `pfsense.reset_state_table` | Flush the entire state table. |
 | `pfsense.send_wol` | Send a Wake-on-LAN packet from a pfSense interface. |
 | `pfsense.system_reboot` / `system_halt` | Reboot or halt the firewall. |
-| `pfsense.exec_command` | Run a shell command via `/api/v2/diagnostics/command_prompt` (output is truncated at 1024 characters). |
+| `pfsense.exec_command` | Run a shell command on the firewall. On the REST API package the output is cut at 1024 characters. |
 
 Each service is routed through an integration entity, so calls take an
 `entity_id` of any pfSense entity (used only to select the target firewall).
+
+On the Netgate API, service control, Wake-on-LAN, `reset_state_table` and
+`exec_command` run through its shell endpoint, because the API has no direct
+equivalent. The user therefore needs shell access.
 
 ### Example: isolate a device on a security alert
 
@@ -223,30 +261,27 @@ Assistant only changes which addresses are in it.
 
 ## How it works
 
-The integration is fully asynchronous. A `DataUpdateCoordinator` polls a set of
-read-only status endpoints concurrently each cycle:
+The integration is fully asynchronous. A `DataUpdateCoordinator` polls the
+firewall's status endpoints concurrently each cycle. A backend layer (`pypfsense`)
+maps each API onto the same data, so the entities don't depend on which API you
+use:
 
-```text
-GET /api/v2/status/system         CPU / memory / temperature / load / identity
-GET /api/v2/status/interfaces     link state and traffic counters
-GET /api/v2/status/gateways       gateway RTT / loss / status
-GET /api/v2/status/openvpn/servers
-GET /api/v2/status/services
-GET /api/v2/status/dhcp_server/leases
-GET /api/v2/status/carp
-GET /api/v2/firewall/virtual_ips  CARP VIPs
-GET /api/v2/firewall/rules , /nat/port_forwards , /nat/outbound/mappings
-GET /api/v2/routing/gateways , /routing/gateway/default
-GET /api/v2/system/dns , /system/hostname , /system/version
-```
+- **Netgate API** (`/api`): `/system/status`, `/system/interfaces/status`,
+  `/system/gateways/status`, `/system/monitoring` (CPU, temperature, mbuf),
+  `/controller/stats` (load), `/services/status`, `/services/dhcp/leases`,
+  per-interface `/firewall/rules/interface/...`, `/firewall/nat/...`,
+  `/services/carp/status`, `/system/update` and `/diag/arp`. Login is a
+  username and password exchanged for a short-lived token, which the client
+  renews.
+- **REST API package** (`/api/v2`): `/status/system`, `/status/interfaces`,
+  `/status/gateways`, `/status/services`, `/status/dhcp_server/leases`,
+  `/firewall/rules`, `/firewall/nat/...`, `/routing/...` and `/system/...`.
 
-Rates (bytes/s, packets/s) are computed from consecutive polls. Successful polls
-are cached to disk, so a brief pfSense outage does not blank every entity.
-
-Writes stage a change and then call the matching apply endpoint
-(`POST /api/v2/firewall/apply`, `/routing/apply`), serialised so concurrent
-applies cannot race. The device's unique ID is the pfSense **Netgate device ID**
-from `/api/v2/status/system`.
+Rates (bytes/s, packets/s) are computed from consecutive polls. Successful
+polls are cached to disk, so a brief pfSense outage does not blank every
+entity. Writes are serialised, so a change and its apply never race another
+write. The device's unique ID is the pfSense **Netgate device ID**. Both APIs
+report the same value, so switching APIs keeps every entity.
 
 ---
 
@@ -259,11 +294,11 @@ fix it. Repairs clear themselves after the next successful poll.
 | Repair | Usual cause | Fix |
 | --- | --- | --- |
 | *pfSense is not reachable* | Firewall down, wrong URL/port, or a firewall rule blocking the HA host. | Check the URL opens from the HA host. The anti-lockout rule only covers the web GUI port; the Netgate API port (usually 8443) needs its own LAN pass rule. |
-| *TLS certificate not trusted* | Self-signed certificate with **Verify SSL** on. | Install a trusted certificate, or re-add the integration with Verify SSL off. |
-| *pfSense API not found* | Package not installed/enabled, or wrong port. | Install/enable the REST API package and include its port in the URL. |
+| *TLS certificate not trusted* | Self-signed certificate with **Verify SSL** on. | Install a trusted certificate, or use **⋮ › Reconfigure** to turn Verify SSL off. |
+| *pfSense API not found* | Wrong port, or the API isn't running. | Netgate API: usually port 8443. REST API package: install and enable it. Include the port in the URL. |
 | *missing API privileges* | The account cannot read some endpoints. Only those parts stop updating. | Grant the listed privileges in System › User Manager. |
 | *API is returning errors* | Firewall-side failure. | Check the firewall's system log; open an issue with a diagnostics download. |
-| *REST API package is end-of-life* | Warning only. Netgate's built-in API is running on this firewall. | Nothing yet; see issue #11 for the migration. |
+| *REST API package is end-of-life* | Warning only. Netgate's built-in API is running on this firewall. | [Switch to the Netgate API](#switching-to-the-netgate-api). |
 
 Wrong credentials are handled by Home Assistant's re-authenticate prompt
 rather than a repair.
@@ -278,6 +313,31 @@ counts. Credentials, the URL, IP and MAC addresses are redacted.
 
 ---
 
+## Switching to the Netgate API
+
+An existing REST API package entry can move to the Netgate API in place:
+
+1. In pfSense, make sure a user can log in to the Netgate API (see
+   [Requirements](#requirements)). Add a LAN pass rule from the Home Assistant
+   host to the API port, usually 8443.
+2. In Home Assistant, open **Settings › Devices & services › pfSense**, then
+   **⋮ › Reconfigure › Netgate API**.
+3. The URL is pre-filled with the same host on port 8443. Enter the username
+   and password.
+
+The integration checks that the new connection reaches the same firewall
+before it changes anything. Entities, history and automations are kept, and
+the old API key is removed from the entry.
+
+Differences after switching:
+- Rule switches show the correct on/off state for rules disabled in the
+  pfSense web UI. The REST API package reports those as enabled.
+- New switches appear for the `coredns` service and for outbound NAT rules.
+- The firmware update entity becomes available.
+- The disk usage sensor becomes unavailable.
+
+---
+
 ## Migrating from v2 (XML-RPC)
 
 v3 removes the XML-RPC / `exec_php` transport entirely. On upgrade:
@@ -288,7 +348,8 @@ v3 removes the XML-RPC / `exec_php` transport entirely. On upgrade:
 - **The URL must include the REST API port.**
 - **Removed – no REST equivalent:** the `exec_php` service; the "Pending Notices
   Present" binary sensor and the `close_notice` / `file_notice` services.
-- **`update` entity is now read-only** (no one-click firmware install).
+- **`update` entity:** no one-click firmware install on the REST API
+  package. On the Netgate API it's an opt-in, experimental option.
 - **Removed sensors – no REST data source:** memory byte figures
   (physmem/usermem/realmem/swap totals), CPU frequency, per-filesystem usage,
   system boot time, per-interface *blocked*-traffic counters, pf state-table
