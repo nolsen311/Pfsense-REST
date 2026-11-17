@@ -183,6 +183,40 @@ Verified against the live 26.07 box:
     `prod`), `osver` `"26.07-RELEASE - 20260807-1926"` → version/buildtime.
   - `/system/setup` → `hostname`, `domain`. `status.host` is the FQDN.
   - No serial (nothing reads it).
+- **Reads (phase 2)** are mapped in `pypfsense/netgate_map.py`, which holds
+  pure functions with unit tests. Verified on the live box against pfrest:
+  every entity key matches (interfaces, gateways, services, all 59
+  filter-rule switches, ARP MACs, WAN IP, DNS servers).
+  - **Filter rules:** fetched per interface. Use the identities from
+    `/system/interfaces/status` (the rules listing omits disabled interfaces),
+    the groups from `interface_mappings`, plus `floating`. Drop `readonly` /
+    tracker `NNNNN-NNNNN` system rules.
+  - **Disabled flags:** Nexus reports them correctly. On the live box 14
+    rules differ from pfrest, which is the pfrest bug.
+  - **Telemetry:**
+    - CPU = sum of user+nice+system+interrupt from
+      `POST /system/monitoring {scope: system, dataset: processor}`. That's a
+      60 s average (min resolution), so it differs from pfrest's
+      instantaneous sample.
+    - Temperature = hottest `cpu_N` from `sensors`, not `thermal_tz0` (a
+      cooler board sensor).
+    - mbuf = total/max from `mbuf`.
+    - Memory = 1 − fram/ram from `/system/status`, about 3 points higher than
+      pfrest.
+    - The `memory` dataset returns zeros. `/mim/device/identity` `devinfo`
+      usage figures are stale or zero, so don't use them.
+    - No source for load average or disk usage (sensors unavailable).
+  - **Gateways:** status `Online` → lower-cased. delay/loss are strings with
+    units (`"14.995ms"`, `"0.0%"`) → parsed. No `srcip`/`substatus` (keys kept,
+    so the attributes don't KeyError).
+  - **Leases / ARP:** lease MACs are upper-case and get lower-cased. ARP has
+    no hostname; `dnsresolve` stands in. `/diag/arp` takes ~5.6 s (reverse
+    DNS, no option to skip), so the device-tracker poll takes ~6.5 s.
+  - **New entities vs pfrest:** `coredns` service switch; NAT outbound
+    switches (pfrest's `created_time` is null).
+  - **Latency:** a full poll takes ~9 s (rules ~1.5 s per interface, NAT
+    ~1.5 s each, `/system/status` ~2 s; the box partly serializes them).
+    Keep the scan interval ≥ 30 s.
 - `_get_shared()` dedupes concurrent GETs of one path for 5 s.
   `/system/status` feeds several methods.
 - Config flow: menu option `netgate` (`auth_method: netgate`,

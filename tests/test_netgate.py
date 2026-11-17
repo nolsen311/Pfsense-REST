@@ -331,11 +331,11 @@ async def test_failed_shared_read_is_not_cached(session) -> None:
 
 
 async def test_unimplemented_reads_are_unsupported(session) -> None:
-    """Capabilities not wired up yet raise the 'unsupported' error, no I/O."""
+    """Writes not wired up yet raise the 'unsupported' error, with no I/O."""
     client = _client(session)
     with aioresponses() as m:
         with pytest.raises(PfSenseUnsupportedError):
-            await client.get_telemetry()
+            await client.system_halt()
         assert not m.requests
 
 

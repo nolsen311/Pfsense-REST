@@ -1,0 +1,405 @@
+"""Map Netgate API (Nexus) responses onto the shapes the integration consumes.
+
+Every function here is pure: a raw response body in, the pfrest-compatible
+structure out (see CLAUDE.md "Consumer contracts"). Field names were checked
+against a live 26.07 box; where the box had no data (OpenVPN servers, CARP
+VIPs, port forwards) they follow ``pfapi_openapi.yml`` and are marked
+LIVE-CHECK.
+
+Raw fields are kept alongside the mapped ones, so nothing Nexus reports is
+lost to a consumer that wants it.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Any
+
+_NUMBER = re.compile(r"-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
+# Filter rules Nexus generates itself (default block, bogons, ...).
+_SYSTEM_TRACKER = re.compile(r"^\d+-\d+$")
+
+# pfrest /status/interfaces field -> Nexus /system/interfaces/status field.
+_INTERFACE_FIELDS = {
+    "descr": "assigned_name",
+    "hwif": "device",
+    "macaddr": "mac_address",
+    "mtu": "mtu",
+    "enable": "enabled",
+    "status": "status",
+    "ipaddr": "ip_address",
+    "subnet": "subnet_mask",
+    "ipaddrv6": "ipv6_address",
+    "subnetv6": "ipv6_subnet_mask",
+    "linklocal": "ipv6_link_local",
+    "media": "media",
+    "gateway": "gateway",
+    "gatewayv6": "ipv6_gateway",
+    "dhcplink": "dhcplink",
+    "inerrs": "in_errors",
+    "outerrs": "out_errors",
+    "collisions": "collisions",
+    "inbytes": "in_bytes",
+    "inbytespass": "in_bytes_pass",
+    "inbytesblock": "in_bytes_block",
+    "outbytes": "out_bytes",
+    "outbytespass": "out_bytes_pass",
+    "outbytesblock": "out_bytes_block",
+    "inpkts": "in_packets",
+    "inpktspass": "in_packets_pass",
+    "inpktsblock": "in_packets_block",
+    "outpkts": "out_packets",
+    "outpktspass": "out_packets_pass",
+    "outpktsblock": "out_packets_block",
+}
+
+
+def number(value: Any) -> float | None:
+    """``"14.995ms"`` -> 14.995, ``"0.0%"`` -> 0.0, ``""``/None -> None."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    match = _NUMBER.search(str(value or ""))
+    return float(match.group()) if match else None
+
+
+def _int_if_digits(value: Any) -> Any:
+    text = str(value) if value is not None else ""
+    return int(text) if text.isdigit() else value
+
+
+def _mac(value: Any) -> Any:
+    return value.lower() if isinstance(value, str) else value
+
+
+def _items(body: Any, key: str) -> list:
+    value = body.get(key) if isinstance(body, dict) else None
+    return [i for i in value if isinstance(i, dict)] if isinstance(value, list) else []
+
+
+# ----------------------------------------------------------------- telemetry
+
+
+def monitoring_latest(body: Any) -> dict[str, float]:
+    """Last value of each series in a ``POST /system/monitoring`` response.
+
+    The response has ``dataseries`` (series names) and ``data``: one CSV row
+    per series, one column per time bucket, oldest first. The newest bucket
+    can still be empty, so the last *numeric* value is taken.
+    """
+    if not isinstance(body, dict):
+        return {}
+    latest: dict[str, float] = {}
+    for name, row in zip(
+        body.get("dataseries") or [], body.get("data") or [], strict=False
+    ):
+        for cell in reversed(str(row).split(",")):
+            value = number(cell) if cell.strip() else None
+            if value is not None:
+                latest[str(name)] = value
+                break
+    return latest
+
+
+def build_telemetry(
+    status: dict,
+    interfaces: Any,
+    gateways: Any,
+    gateways_detail: dict,
+    openvpn: Any,
+    processor: dict[str, float],
+    sensors: dict[str, float],
+    mbuf: dict[str, float],
+) -> dict:
+    """The legacy ``telemetry`` dict, same keys as pfrest's ``_build_telemetry``.
+
+    Not available from Nexus: load average and disk usage (left ``None``,
+    so those sensors are unavailable).
+    """
+    status = status or {}
+    cpu_parts = [processor.get(k) for k in ("user", "nice", "system", "interrupt")]
+    cpu_used = (
+        round(sum(v for v in cpu_parts if v is not None), 2)
+        if any(v is not None for v in cpu_parts)
+        else None
+    )
+
+    ram, free = number(status.get("ram")), number(status.get("fram"))
+    mem_used = round(100 * (1 - free / ram), 1) if ram and free is not None else None
+    swap, fswap = number(status.get("swap")), number(status.get("fswap"))
+    swap_used = (
+        round(100 * (1 - fswap / swap), 1) if swap and fswap is not None else None
+    )
+
+    mbuf_total, mbuf_max = mbuf.get("total"), mbuf.get("max")
+    mbuf_used = (
+        round(100 * mbuf_total / mbuf_max, 2)
+        if mbuf_max and mbuf_total is not None
+        else None
+    )
+
+    # pfrest reports the hottest core; thermal_tz0 is a cooler board sensor.
+    cpu_temps = [v for k, v in sensors.items() if k.startswith("cpu_")]
+    temp = max(cpu_temps) if cpu_temps else sensors.get("thermal_tz0")
+
+    telemetry: dict = {
+        "wan_ip": "Disconnected",
+        "cpu": {
+            "used_percent": cpu_used,
+            "count": status.get("cores"),
+            "model": status.get("cpu"),
+        },
+        "memory": {"used_percent": mem_used, "swap_used_percent": swap_used},
+        "mbuf": {"used_percent": mbuf_used},
+        "system": {
+            "uptime": status.get("up"),
+            "temp": temp,
+            "load_average": {
+                "one_minute": None,
+                "five_minute": None,
+                "fifteen_minute": None,
+            },
+        },
+        "disk_used_percent": None,
+        "filesystems": [],
+        "interfaces": {},
+        "gateways": {},
+        "gateways_detail": gateways_detail or {},
+        "openvpn": {"servers": {}},
+    }
+
+    for iface in _items(interfaces, "interfaces"):
+        name = iface.get("identity")
+        if not name:
+            continue
+        entry = dict(iface)
+        for ours, theirs in _INTERFACE_FIELDS.items():
+            entry[ours] = iface.get(theirs)
+        entry["name"] = entry["ifname"] = name
+        entry["descr"] = iface.get("assigned_name") or name
+        entry["macaddr"] = _mac(entry["macaddr"])
+        telemetry["interfaces"][name] = entry
+        if name == "wan":
+            telemetry["wan_ip"] = iface.get("ip_address") or "Disconnected"
+
+    for gw in _items(gateways, "gateways"):
+        name = gw.get("name")
+        if not name:
+            continue
+        entry = dict(gw)
+        entry.update(
+            {
+                "status": str(gw.get("status") or "").lower() or None,
+                "delay": number(gw.get("delay")),
+                "stddev": number(gw.get("stddev")),
+                "loss": number(gw.get("loss")),
+                "monitorip": gw.get("monitor"),
+                "srcip": gw.get("srcip"),
+                "substatus": gw.get("substatus") or "none",
+            }
+        )
+        telemetry["gateways"][name] = entry
+
+    # LIVE-CHECK: no OpenVPN servers on the test box; shape per the spec
+    # (OpenVPNActiveConn / OpenVPNConn).
+    for server in _items(openvpn, "servers"):
+        vpnid = server.get("vpnid")
+        conns = [c for c in server.get("conns") or [] if isinstance(c, dict)]
+        telemetry["openvpn"]["servers"][str(vpnid)] = {
+            "name": server.get("name"),
+            "vpnid": vpnid,
+            "connected_client_count": len(conns),
+            "total_bytes_recv": sum(number(c.get("bytes_recv")) or 0 for c in conns),
+            "total_bytes_sent": sum(number(c.get("bytes_sent")) or 0 for c in conns),
+        }
+
+    return telemetry
+
+
+def gateways_detail(body: Any) -> dict:
+    """``/system/gateways`` keyed by name, with pfrest's ``isdefaultgw``/``interface``."""
+    defaults = body.get("defaults") if isinstance(body, dict) else None
+    defaults = defaults if isinstance(defaults, dict) else {}
+    default_names = {defaults.get("defaultgw4"), defaults.get("defaultgw6")} - {
+        None,
+        "",
+    }
+    out = {}
+    for gw in _items(body, "gateways"):
+        name = gw.get("name")
+        if not name:
+            continue
+        entry = dict(gw)
+        entry["interface"] = gw.get("interface_identity") or gw.get("interface")
+        entry["isdefaultgw"] = bool(gw.get("isdefaultgw")) or name in default_names
+        out[name] = entry
+    return out
+
+
+# ------------------------------------------------------------------ services
+
+
+def services(body: Any) -> list[dict]:
+    """``/services/status``; already pfrest-shaped (``name``, ``status`` bool)."""
+    out = []
+    for svc in _items(body, "services"):
+        entry = dict(svc)
+        entry["status"] = bool(svc.get("status", svc.get("running")))
+        out.append(entry)
+    return out
+
+
+def dns_servers(setup: Any) -> list[str]:
+    """``/system/setup`` ``dnsservers`` (``[{ip, gw, name}]``) -> IP strings."""
+    out = []
+    items = setup.get("dnsservers") if isinstance(setup, dict) else None
+    for item in items if isinstance(items, list) else []:
+        ip = item.get("ip") if isinstance(item, dict) else item
+        if ip:
+            out.append(str(ip))
+    return out
+
+
+# ---------------------------------------------------------------- dhcp / arp
+
+
+def dhcp_leases(body: Any) -> list[dict]:
+    """``/services/dhcp/leases`` ``v4leases`` in pfrest's lease shape."""
+    out = []
+    for lease in _items(body, "v4leases"):
+        entry = dict(lease)
+        state = lease.get("state")
+        entry.update(
+            {
+                "ip": lease.get("ip"),
+                "mac": _mac(lease.get("mac")),
+                "hostname": lease.get("host"),
+                "if": lease.get("assigned_intf"),
+                "starts": lease.get("start"),
+                "ends": lease.get("end"),
+                "active_status": "static" if lease.get("type") == "static" else state,
+                "online_status": lease.get("online_status"),
+                "descr": lease.get("descr"),
+            }
+        )
+        out.append(entry)
+    return out
+
+
+def arp_table(body: Any) -> list[dict]:
+    """``/diag/arp`` in pfrest's shape; ``dnsresolve`` stands in for hostname."""
+    out = []
+    for row in _items(body, "arp"):
+        entry = dict(row)
+        expires = row.get("expires")
+        entry.update(
+            {
+                "ip_address": row.get("ip"),
+                "mac_address": _mac(row.get("mac")),
+                "hostname": row.get("dnsresolve") or "?",
+                "permanent": str(expires).lower() == "permanent",
+            }
+        )
+        out.append(entry)
+    return out
+
+
+# --------------------------------------------------------------------- rules
+
+
+def filter_rules(bodies: dict[str, Any]) -> list[dict]:
+    """Merge per-interface ``/firewall/rules/interface/{if}`` responses.
+
+    ``bodies`` maps the interface identity (``lan``, ``opt1``, a group name,
+    ...) to its response. Read-only system rules (tracker ``"10000-10999"``)
+    are dropped; a rule listed under several interfaces (floating) is kept
+    once. ``tracker`` becomes an int like pfrest's; ``interface`` is the
+    identity.
+    """
+    out, seen = [], set()
+    for ident, body in bodies.items():
+        for item in _items(body, "entries"):
+            rule = item.get("rule")
+            if not isinstance(rule, dict):
+                continue
+            tracker = rule.get("tracker")
+            if rule.get("readonly") or _SYSTEM_TRACKER.match(str(tracker or "")):
+                continue
+            key = rule.get("id") or tracker
+            if key in seen:
+                continue
+            seen.add(key)
+            entry = dict(rule)
+            entry["tracker"] = _int_if_digits(tracker)
+            entry["interface"] = ident
+            entry["interface_name"] = rule.get("interface")
+            entry["disabled"] = bool(rule.get("disabled"))
+            entry["associated_rule_id"] = rule.get("associated_rule_id") or None
+            out.append(entry)
+    return out
+
+
+def _nat_rule(rule: dict) -> dict:
+    entry = dict(rule)
+    created = rule.get("created") if isinstance(rule.get("created"), dict) else {}
+    entry["created_time"] = _int_if_digits(created.get("time"))
+    entry["disabled"] = bool(rule.get("disabled"))
+    entry["associated_rule_id"] = rule.get("associated_rule_id") or None
+    return entry
+
+
+def nat_port_forwards(body: Any) -> list[dict]:
+    """``/firewall/nat/port-forward`` ``rules[].rule``. LIVE-CHECK: none on the box."""
+    return [
+        _nat_rule(item["rule"])
+        for item in _items(body, "rules")
+        if isinstance(item.get("rule"), dict)
+    ]
+
+
+def nat_outbound(body: Any) -> list[dict]:
+    """``/firewall/nat/outbound`` manual ``rules`` (automatic ones are skipped)."""
+    return [_nat_rule(rule) for rule in _items(body, "rules")]
+
+
+# ---------------------------------------------------------------------- carp
+
+
+def carp_enabled(body: Any) -> bool:
+    """``/services/carp/status``: enabled and not in maintenance mode."""
+    if not isinstance(body, dict):
+        return False
+    return bool(body.get("enabled")) and not body.get("maintenancemode_enabled")
+
+
+def carp_interfaces(vips: Any, carp_status: Any) -> list[dict]:
+    """CARP VIPs from ``/firewall/virtualip`` with status from ``/services/carp/status``.
+
+    LIVE-CHECK: no CARP VIPs on the test box. Status is matched on the VIP
+    address; ``status`` is upper-cased so ``"MASTER"`` compares as pfrest's.
+    """
+    status_by_addr = {}
+    for vip in _items(carp_status, "vips"):
+        addr = str(vip.get("virtual_ip") or "").split("/", 1)[0]
+        if addr:
+            status_by_addr[addr] = vip.get("status")
+    out = []
+    for vip in _items(vips, "virtualips"):
+        if vip.get("mode") != "carp":
+            continue
+        entry = {
+            k: v for k, v in vip.items() if k not in ("password", "password_confirm")
+        }
+        address, _, bits = str(vip.get("subnet") or "").partition("/")
+        status = status_by_addr.get(address)
+        entry.update(
+            {
+                "subnet": address or None,
+                "subnet_bits": _int_if_digits(bits or vip.get("subnet_bits")),
+                "type": vip.get("type") or "single",
+                "status": str(status).upper() if status else None,
+            }
+        )
+        out.append(entry)
+    return out

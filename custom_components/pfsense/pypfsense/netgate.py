@@ -36,10 +36,11 @@ import json
 import logging
 import time
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import aiohttp
 
+from . import netgate_map
 from .errors import (
     PfSenseAPIError,
     PfSenseAuthError,
@@ -377,33 +378,179 @@ class NetgateClient:
             "buildtime": buildtime.strip() or None,
         }
 
-    # ----------------------------------------- not wired up yet (phase 2+)
+    # -------------------------------------------------------------- reads
+
+    async def _monitoring(self, dataset: str) -> dict[str, float]:
+        """Latest value per series of a ``system`` monitoring dataset.
+
+        The API's minimum resolution is 60 s, so each value is the average of
+        the most recent minute.
+        """
+        now = int(time.time())
+        body = await self._request(
+            "POST",
+            "/system/monitoring",
+            payload={
+                "scope": "system",
+                "dataset": dataset,
+                "start_time_unix_seconds": now - 300,
+                "end_time_unix_seconds": now,
+                "resolution_seconds": 60,
+            },
+        )
+        return netgate_map.monitoring_latest(body)
+
+    async def _optional(self, coro) -> Any:
+        """A telemetry part that must not fail the whole telemetry read."""
+        try:
+            return await coro
+        except (PfSenseAPIError, PfSenseNotFoundError, PfSensePrivilegeError) as err:
+            _LOGGER.debug("Netgate API telemetry part unavailable: %s", err)
+            return None
+
+    async def get_telemetry(self) -> dict:
+        """The legacy ``telemetry`` dict (see :func:`netgate_map.build_telemetry`).
+
+        Interface and gateway status are required; system resource series,
+        gateway config and OpenVPN status degrade to empty values when
+        missing.
+        """
+        (
+            status,
+            interfaces,
+            gateways,
+            detail,
+            openvpn,
+            processor,
+            sensors,
+            mbuf,
+        ) = await asyncio.gather(
+            self._status(),
+            self._get_shared("/system/interfaces/status"),
+            self._get("/system/gateways/status"),
+            self._optional(self.get_gateways_detail()),
+            self._optional(self._get("/vpn/openvpn/status")),
+            self._optional(self._monitoring("processor")),
+            self._optional(self._monitoring("sensors")),
+            self._optional(self._monitoring("mbuf")),
+        )
+        return netgate_map.build_telemetry(
+            status,
+            interfaces,
+            gateways,
+            detail or {},
+            openvpn,
+            processor or {},
+            sensors or {},
+            mbuf or {},
+        )
+
+    async def get_firmware_update_info(self) -> dict | None:
+        """Not consumed by the poll yet (it stores ``None`` for both backends)."""
+        return None
+
+    async def get_dns_servers(self) -> list[str]:
+        """System DNS servers from ``/system/setup``."""
+        return netgate_map.dns_servers(await self._get_shared("/system/setup"))
+
+    async def get_services(self) -> list[dict]:
+        """Services and whether each is running."""
+        return netgate_map.services(await self._get_shared("/services/status"))
+
+    async def get_dhcp_leases(self, dns_lookups=None) -> list[dict]:
+        """IPv4 DHCP leases."""
+        return netgate_map.dhcp_leases(await self._get("/services/dhcp/leases"))
+
+    async def get_arp_table(self, resolve_hostnames: bool = False) -> list[dict]:
+        """The ARP table."""
+        return netgate_map.arp_table(await self._get("/diag/arp"))
+
+    async def get_gateways_detail(self) -> dict:
+        """Gateway configuration keyed by name."""
+        return netgate_map.gateways_detail(await self._get_shared("/system/gateways"))
+
+    async def get_filter_rules(self) -> list[dict]:
+        """User filter rules across every interface, group and floating.
+
+        Nexus lists rules per interface. The rules listing leaves out disabled
+        interfaces (whose rules pfrest still returns), so the interface
+        identities come from interface status too, plus the groups from the
+        listing and ``floating``. One GET each, run concurrently; an
+        interface that errors is skipped rather than failing every rule.
+        """
+        listing, status = await asyncio.gather(
+            self._get("/firewall/rules/interface"),
+            self._get_shared("/system/interfaces/status"),
+        )
+        interfaces = (status or {}).get("interfaces") or []
+        mappings = ((listing or {}).get("interface_mappings") or {}).values()
+        idents = [
+            *(
+                str(i["identity"])
+                for i in interfaces
+                if isinstance(i, dict) and i.get("identity")
+            ),
+            *(
+                str(m["ident"])
+                for m in mappings
+                if isinstance(m, dict) and m.get("ident")
+            ),
+            "floating",
+        ]
+        idents = list(dict.fromkeys(idents))
+
+        results = await asyncio.gather(
+            *(
+                self._get(f"/firewall/rules/interface/{quote(i, safe='')}")
+                for i in idents
+            ),
+            return_exceptions=True,
+        )
+        bodies: dict[str, Any] = {}
+        for ident, result in zip(idents, results, strict=True):
+            if isinstance(result, (PfSenseAPIError, PfSenseNotFoundError)):
+                _LOGGER.debug("Netgate API: no rules for %s: %s", ident, result)
+            elif isinstance(result, BaseException):
+                raise result
+            else:
+                bodies[ident] = result
+        if not bodies:
+            raise PfSenseAPIError(0, "", "no interface returned firewall rules")
+        return netgate_map.filter_rules(bodies)
+
+    async def get_nat_port_forward_rules(self) -> list[dict]:
+        """NAT port-forward rules."""
+        return netgate_map.nat_port_forwards(
+            await self._get("/firewall/nat/port-forward")
+        )
+
+    async def get_nat_outbound_rules(self) -> list[dict]:
+        """Manual NAT outbound rules."""
+        return netgate_map.nat_outbound(await self._get("/firewall/nat/outbound"))
+
+    async def get_carp_status(self) -> bool:
+        """True when CARP is enabled and not in maintenance mode."""
+        return netgate_map.carp_enabled(await self._get_shared("/services/carp/status"))
+
+    async def get_carp_interfaces(self) -> list[dict]:
+        """CARP virtual IPs with their current status."""
+        vips, status = await asyncio.gather(
+            self._get("/firewall/virtualip"),
+            self._get_shared("/services/carp/status"),
+        )
+        return netgate_map.carp_interfaces(vips, status)
+
+    # ----------------------------------------- not wired up yet (phase 4+)
     #
-    # Each raises PfSenseUnsupportedError so the poll records the capability
-    # as "unsupported" instead of failing. Phases 2-5 of the migration plan
-    # (issue #11) replace these with real implementations.
+    # Writes and actions. Each raises PfSenseUnsupportedError until phase 4
+    # of the migration plan (issue #11); a few (WOL, generic service control)
+    # have no Nexus endpoint at all.
 
     @staticmethod
     def _not_yet(name: str) -> PfSenseUnsupportedError:
         return PfSenseUnsupportedError(
             f"{name} is not implemented for the Netgate API backend yet"
         )
-
-    async def get_firmware_update_info(self) -> dict | None:
-        """Not implemented yet."""
-        raise self._not_yet("get_firmware_update_info")
-
-    async def get_dns_servers(self) -> list[str]:
-        """Not implemented yet."""
-        raise self._not_yet("get_dns_servers")
-
-    async def get_telemetry(self) -> dict:
-        """Not implemented yet."""
-        raise self._not_yet("get_telemetry")
-
-    async def get_services(self) -> list[dict]:
-        """Not implemented yet."""
-        raise self._not_yet("get_services")
 
     async def start_service(
         self, service_name: str, service: dict | None = None
@@ -429,37 +576,13 @@ class NetgateClient:
         """Not implemented yet."""
         raise self._not_yet("restart_service_if_running")
 
-    async def get_dhcp_leases(self, dns_lookups=None) -> list[dict]:
-        """Not implemented yet."""
-        raise self._not_yet("get_dhcp_leases")
-
-    async def get_arp_table(self, resolve_hostnames: bool = False) -> list[dict]:
-        """Not implemented yet."""
-        raise self._not_yet("get_arp_table")
-
     async def delete_arp_entry(self, ip: str) -> None:
         """Not implemented yet."""
         raise self._not_yet("delete_arp_entry")
 
-    async def get_gateways_detail(self) -> dict:
-        """Not implemented yet."""
-        raise self._not_yet("get_gateways_detail")
-
     async def set_default_gateway(self, gateway: str, ip_version: str = "4") -> None:
         """Not implemented yet."""
         raise self._not_yet("set_default_gateway")
-
-    async def get_filter_rules(self) -> list[dict]:
-        """Not implemented yet."""
-        raise self._not_yet("get_filter_rules")
-
-    async def get_nat_port_forward_rules(self) -> list[dict]:
-        """Not implemented yet."""
-        raise self._not_yet("get_nat_port_forward_rules")
-
-    async def get_nat_outbound_rules(self) -> list[dict]:
-        """Not implemented yet."""
-        raise self._not_yet("get_nat_outbound_rules")
 
     async def enable_filter_rule_by_tracker(self, tracker) -> None:
         """Not implemented yet."""
@@ -494,14 +617,6 @@ class NetgateClient:
     ) -> None:
         """Not implemented yet."""
         raise self._not_yet("update_alias_address")
-
-    async def get_carp_status(self) -> bool:
-        """Not implemented yet."""
-        raise self._not_yet("get_carp_status")
-
-    async def get_carp_interfaces(self) -> list[dict]:
-        """Not implemented yet."""
-        raise self._not_yet("get_carp_interfaces")
 
     async def reset_state_table(self) -> None:
         """Not implemented yet."""
