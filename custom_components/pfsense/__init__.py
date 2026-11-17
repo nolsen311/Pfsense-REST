@@ -38,16 +38,19 @@ from .const import (
     DEFAULT_VERIFY_SSL,
     DEVICE_TRACKER_COORDINATOR,
     DOMAIN,
+    HEALTH,
     LOADED_PLATFORMS,
     PFSENSE_CLIENT,
     PLATFORMS,
     SHOULD_RELOAD,
     UNDO_UPDATE_LISTENER,
 )
+from .health import HealthTracker, async_clear_issues, async_sync_issues, classify
 from .pypfsense import (
+    BACKEND_PFREST,
+    CONF_BACKEND,
     PfSenseAuthError,
     PfSenseBackend,
-    PfSensePrivilegeError,
     client_from_config,
 )
 from .services import ServiceRegistrar
@@ -173,31 +176,60 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         # Missing credentials (e.g. a half-migrated entry): send the user to
         # reauth rather than retrying setup forever.
         raise ConfigEntryAuthFailed(str(err)) from err
-    data = PfSenseData(client, entry, hass)
     scan_interval = options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+    health = HealthTracker(config.get(CONF_BACKEND, BACKEND_PFREST), scan_interval)
+    data = PfSenseData(client, entry, hass, health)
+
+    @callback
+    def _publish(state: dict | None) -> None:
+        """Mirror ``health`` into repair issues and the health entities."""
+        async_sync_issues(hass, entry, health, state)
+        health.async_notify()
 
     async def async_update_data():
-        """Fetch data from pfSense, falling back to the on-disk cache on failure."""
-        new_state = None
+        """Fetch data from pfSense, falling back to the on-disk cache on failure.
+
+        Every outcome is recorded in ``health`` and mirrored into repair
+        issues. Cached data is served only while it is younger than
+        ``health.stale_after`` (any age at startup, so the integration can
+        load while the firewall is unreachable); past that, entities go
+        unavailable instead of showing old values as current.
+        """
+        started = time.monotonic()
         try:
             async with asyncio.timeout(scan_interval - 1):
                 new_state = await data.update()
-        except (PfSenseAuthError, PfSensePrivilegeError) as err:
+        except PfSenseAuthError as err:
+            health.record_poll_failure(err)
+            _publish(coordinator.data)
             raise ConfigEntryAuthFailed(str(err)) from err
-        except Exception:
+        except Exception as err:  # noqa: BLE001 - every failure is recorded
+            health.record_poll_failure(err)
             _LOGGER.warning(
-                "pfSense poll failed; trying the local cache", exc_info=True
+                "pfSense poll failed (%s): %s; trying the local cache",
+                classify(err),
+                err,
             )
         else:
-            if new_state:
-                await async_save_cache(hass, entry.entry_id, new_state)
-                return new_state
+            health.record_poll_success(round((time.monotonic() - started) * 1000))
+            _publish(new_state)
+            await async_save_cache(hass, entry.entry_id, new_state)
+            return new_state
 
         cached_data = await async_load_cache(hass, entry.entry_id)
-        if cached_data:
+        cache_time = (cached_data or {}).get("update_time")
+        if cached_data and (
+            coordinator.data is None or not health.cache_too_old(cache_time)
+        ):
             data.restore_state(cached_data)
+            health.record_cache_served(cache_time)
+            _publish(cached_data)
             return cached_data
-        raise UpdateFailed("pfSense poll failed and no usable cache is available")
+        _publish(coordinator.data)
+        raise UpdateFailed(
+            f"pfSense poll failed ({health.poll_error_kind}) and no recent cache "
+            "is available"
+        )
 
     coordinator = DataUpdateCoordinator(
         hass,
@@ -213,7 +245,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     if not device_tracker_enabled:
         platforms.remove("device_tracker")
     else:
-        device_tracker_data = PfSenseData(client, entry, hass)
+        device_tracker_data = PfSenseData(client, entry, hass, health)
         device_tracker_scan_interval = options.get(
             CONF_DEVICE_TRACKER_SCAN_INTERVAL, DEFAULT_DEVICE_TRACKER_SCAN_INTERVAL
         )
@@ -226,10 +258,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
                     new_dt_state = await device_tracker_data.update(
                         {"scope": "device_tracker"}
                     )
-            except (PfSenseAuthError, PfSensePrivilegeError) as err:
+            except PfSenseAuthError as err:
                 raise ConfigEntryAuthFailed(str(err)) from err
-            except Exception:
-                _LOGGER.warning("pfSense device tracker update failed", exc_info=True)
+            except Exception as err:  # noqa: BLE001 - recorded as the arp check
+                health.record_check("arp", err)
+                _publish(coordinator.data)
+                _LOGGER.warning(
+                    "pfSense device tracker update failed (%s): %s", classify(err), err
+                )
             else:
                 if new_dt_state:
                     return new_dt_state
@@ -252,6 +288,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {
         COORDINATOR: coordinator,
+        HEALTH: health,
         DEVICE_TRACKER_COORDINATOR: device_tracker_coordinator,
         PFSENSE_CLIENT: client,
         UNDO_UPDATE_LISTENER: [undo_listener],
@@ -280,6 +317,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id)
+        async_clear_issues(hass, entry)
 
     return unload_ok
 
@@ -315,16 +353,66 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     return True
 
 
+# One poll = these reads, run concurrently. Each is
+# (check name, poll-state key, client method, value when never fetched).
+# Keys sharing a check name are reported as one capability.
+_POLL_READS = (
+    ("system", "system_info", "get_system_info", None),
+    ("system", "host_firmware_version", "get_host_firmware_version", None),
+    ("telemetry", "telemetry", "get_telemetry", {}),
+    ("services", "services", "get_services", []),
+    ("carp", "carp_interfaces", "get_carp_interfaces", []),
+    ("carp", "carp_status", "get_carp_status", False),
+    ("dhcp", "dhcp_leases", "get_dhcp_leases", []),
+    ("dns", "dns_servers", "get_dns_servers", []),
+    ("firewall_rules", "firewall_rules", "get_filter_rules", []),
+    ("nat", "nat_port_forward_rules", "get_nat_port_forward_rules", []),
+    ("nat", "nat_outbound_rules", "get_nat_outbound_rules", []),
+)
+# Without these the device cannot be identified, so their failure fails the
+# whole poll (and the coordinator falls back to the cache).
+_CORE_KEYS = frozenset({"system_info", "host_firmware_version"})
+
+
+def _merge_poll_results(
+    results: list, previous_state: dict, new_state: dict
+) -> dict[str, BaseException | None]:
+    """Put each read's result into ``new_state``; return the error per check.
+
+    A failed non-core read keeps its previous value (or the empty default).
+    Auth errors and core-read failures are re-raised to fail the poll.
+    """
+    check_errors: dict[str, BaseException | None] = {}
+    for (check, key, _, default), result in zip(_POLL_READS, results, strict=True):
+        if isinstance(result, BaseException):
+            if not isinstance(result, Exception):
+                raise result  # CancelledError, KeyboardInterrupt, ...
+            if isinstance(result, PfSenseAuthError) or key in _CORE_KEYS:
+                raise result
+            _LOGGER.debug("pfSense %s read failed: %s", key, result)
+            check_errors[check] = check_errors.get(check) or result
+            new_state[key] = copy.deepcopy(previous_state.get(key, default))
+        else:
+            check_errors.setdefault(check, None)
+            new_state[key] = result
+    return check_errors
+
+
 class PfSenseData:
     """Fetches and holds the pfSense poll state for a config entry."""
 
     def __init__(
-        self, client: PfSenseBackend, config_entry: ConfigEntry, hass: HomeAssistant
+        self,
+        client: PfSenseBackend,
+        config_entry: ConfigEntry,
+        hass: HomeAssistant,
+        health: HealthTracker | None = None,
     ):
         """Initialize the data object."""
         self._client = client
         self._config_entry = config_entry
         self._hass = hass
+        self._health = health or HealthTracker()
         self._state = {}
         self._firmware_update_info = None
 
@@ -338,7 +426,12 @@ class PfSenseData:
         self._state = state
 
     async def update(self, opts=None):
-        """Fetch the latest state from pfSense over the REST API."""
+        """Fetch the latest state from pfSense.
+
+        A failing read keeps its previous value (or an empty default) and is
+        recorded as a failed check instead of failing the whole poll; auth
+        errors and failures of the core identity reads still raise.
+        """
         opts = opts or {}
         new_state = {}
 
@@ -355,53 +448,26 @@ class PfSenseData:
                     self._client.get_system_info(),
                     self._client.get_arp_table(True),
                 )
+                self._health.record_check("arp")
                 new_state["system_info"] = system_info
                 new_state["arp_table"] = arp_table
                 self._state = new_state
                 return new_state
 
-            (
-                system_info,
-                host_firmware_version,
-                telemetry_data,
-                services,
-                carp_interfaces,
-                carp_status,
-                dhcp_leases,
-                dns_servers,
-                filter_rules,
-                nat_port_forwards,
-                nat_outbound,
-            ) = await asyncio.gather(
-                self._client.get_system_info(),
-                self._client.get_host_firmware_version(),
-                self._client.get_telemetry(),
-                self._client.get_services(),
-                self._client.get_carp_interfaces(),
-                self._client.get_carp_status(),
-                self._client.get_dhcp_leases(),
-                self._client.get_dns_servers(),
-                self._client.get_filter_rules(),
-                self._client.get_nat_port_forward_rules(),
-                self._client.get_nat_outbound_rules(),
+            results = await asyncio.gather(
+                *(getattr(self._client, method)() for _, _, method, _ in _POLL_READS),
+                return_exceptions=True,
             )
 
-            new_state["system_info"] = system_info
-            new_state["host_firmware_version"] = host_firmware_version
+            check_errors = _merge_poll_results(results, previous_state, new_state)
+            for check, err in check_errors.items():
+                self._health.record_check(check, err)
+
             new_state["firmware_update_info"] = None
-            new_state["telemetry"] = telemetry_data
-            new_state["firewall_rules"] = filter_rules
-            new_state["nat_port_forward_rules"] = nat_port_forwards
-            new_state["nat_outbound_rules"] = nat_outbound
-            new_state["dns_servers"] = dns_servers
-            new_state["services"] = services
-            new_state["carp_interfaces"] = carp_interfaces
-            new_state["carp_status"] = carp_status
-            new_state["dhcp_leases"] = dhcp_leases
             new_state["dhcp_stats"] = {}
 
             lease_stats = {"total": 0, "online": 0, "idle_offline": 0}
-            for lease in dhcp_leases:
+            for lease in new_state["dhcp_leases"] or []:
                 if lease.get("active_status") == "expired":
                     continue
                 lease_stats["total"] += 1
@@ -412,12 +478,22 @@ class PfSenseData:
                     lease_stats["idle_offline"] += 1
             new_state["dhcp_stats"]["leases"] = lease_stats
 
+            # Rates compare against the telemetry the previous state *holds*,
+            # which may itself be a reused (older) copy; time them from when
+            # that telemetry was actually fetched, and skip when this poll's
+            # telemetry is a reused copy too.
+            telemetry_fresh = check_errors.get("telemetry") is None
+            previous_telemetry_time = previous_state.get(
+                "telemetry_update_time", previous_state.get("update_time")
+            )
+            new_state["telemetry_update_time"] = (
+                current_time if telemetry_fresh else previous_telemetry_time
+            )
             scan_interval = self._config_entry.options.get(
                 CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
             )
-            previous_update_time = dict_get(new_state, "previous_state.update_time")
-            if previous_update_time is not None:
-                elapsed_time = current_time - previous_update_time
+            if telemetry_fresh and previous_telemetry_time is not None:
+                elapsed_time = current_time - previous_telemetry_time
                 _compute_interface_rates(new_state, elapsed_time, scan_interval)
                 _compute_openvpn_rates(new_state, elapsed_time)
 

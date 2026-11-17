@@ -11,6 +11,7 @@ from homeassistant.util import slugify
 
 from . import CoordinatorEntityManager, PfSenseEntity
 from .const import COORDINATOR, DOMAIN
+from .health_entity import PfSenseRunHealthCheckButton
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -50,6 +51,13 @@ async def async_setup_entry(
                     name="Reset State Table",
                     icon="mdi:delete-sweep",
                 ),
+            ),
+            PfSenseRunHealthCheckButton(
+                config_entry,
+                coordinator,
+                "run_health_check",
+                "Run Health Check",
+                "mdi:stethoscope",
             ),
         ]
 

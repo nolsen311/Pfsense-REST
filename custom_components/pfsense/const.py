@@ -41,6 +41,7 @@ LOADED_PLATFORMS = "loaded_platforms"
 
 PFSENSE_CLIENT = "pfsense_client"
 COORDINATOR = "coordinator"
+HEALTH = "health"
 DEVICE_TRACKER_COORDINATOR = "device_tracker_coordinator"
 SHOULD_RELOAD = "should_reload"
 TRACKED_MACS = "tracked_macs"
