@@ -32,3 +32,7 @@ class PfSenseAPIError(PfSenseError):
         self.response_id = response_id
         self.message = message
         super().__init__(f"pfSense API {code} {response_id}: {message}")
+
+
+class PfSenseUnsupportedError(PfSenseError):
+    """The backend's API has no way to do this (not a failure of the firewall)."""

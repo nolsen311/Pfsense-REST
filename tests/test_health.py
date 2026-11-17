@@ -20,6 +20,7 @@ from custom_components.pfsense.health import (
     KIND_TLS,
     KIND_UNKNOWN,
     KIND_UNREACHABLE,
+    KIND_UNSUPPORTED,
     HealthTracker,
     classify,
 )
@@ -29,6 +30,7 @@ from custom_components.pfsense.pypfsense import (
     PfSenseConnectionError,
     PfSenseNotFoundError,
     PfSensePrivilegeError,
+    PfSenseUnsupportedError,
 )
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_URL, CONF_VERIFY_SSL, STATE_OFF, STATE_ON
@@ -147,6 +149,7 @@ def _wrapped(cause: BaseException) -> PfSenseConnectionError:
         (_wrapped(ssl.SSLError("bad cert")), KIND_TLS),
         (PfSenseConnectionError("Connection refused"), KIND_UNREACHABLE),
         (ValueError("x"), KIND_UNKNOWN),
+        (PfSenseUnsupportedError("x"), KIND_UNSUPPORTED),
     ],
 )
 def test_classify(err, kind) -> None:
@@ -349,3 +352,15 @@ async def test_health_tracker_is_shared_in_hass_data(hass: HomeAssistant) -> Non
     """Platforms and diagnostics find the tracker under HEALTH."""
     await _setup(hass, _client())
     assert isinstance(hass.data[DOMAIN][ENTRY_ID][HEALTH], HealthTracker)
+
+
+async def test_unsupported_capability_is_not_degraded(hass: HomeAssistant) -> None:
+    """A capability the backend cannot provide shows as unsupported, status ok."""
+    client = _client()
+    client.get_dhcp_leases.side_effect = PfSenseUnsupportedError("no endpoint")
+    await _setup(hass, client)
+    status = hass.states.get(STATUS)
+    assert status.state == "ok"
+    assert status.attributes["checks"]["dhcp"] == KIND_UNSUPPORTED
+    assert status.attributes["failing_checks"] == []
+    assert not ir.async_get(hass).issues

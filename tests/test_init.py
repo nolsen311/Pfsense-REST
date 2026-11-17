@@ -117,7 +117,7 @@ async def test_migrate_v2_password_entry_requires_reauth(hass: HomeAssistant):
     assert await hass.config_entries.async_setup(entry.entry_id) is False
     await hass.async_block_till_done()
 
-    assert entry.version == 4
+    assert entry.version == 5
     assert entry.data[CONF_AUTH_METHOD] == AUTH_METHOD_API_KEY
     assert "password" not in entry.data
     assert "username" not in entry.data
@@ -155,6 +155,41 @@ async def test_migrate_v3_stamps_auth_method(hass: HomeAssistant):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-    assert entry.version == 4
+    assert entry.version == 5
     assert entry.data[CONF_AUTH_METHOD] == AUTH_METHOD_API_KEY
     assert entry.data[CONF_API_KEY] == "k"
+
+
+@pytest.mark.asyncio
+async def test_migrate_v4_stamps_backend(hass: HomeAssistant):
+    """A v4 entry gains backend=pfrest and becomes v5; nothing else changes."""
+    data = {
+        CONF_URL: "https://192.168.1.1:8444",
+        CONF_API_KEY: "k",
+        CONF_VERIFY_SSL: False,
+        CONF_AUTH_METHOD: AUTH_METHOD_API_KEY,
+    }
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=4,
+        title="router.local",
+        unique_id="abc",
+        data=data,
+        options={"device_tracker_enabled": False},
+        entry_id="v4_entry",
+    )
+    entry.add_to_hass(hass)
+
+    with (
+        patch(
+            "custom_components.pfsense.client_from_config",
+            return_value=_full_client_mock(),
+        ),
+        patch("custom_components.pfsense.async_load_cache", return_value=None),
+        patch("custom_components.pfsense.async_save_cache"),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert entry.version == 5
+    assert entry.data == {**data, "backend": "pfrest"}

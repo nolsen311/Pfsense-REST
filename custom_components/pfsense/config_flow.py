@@ -25,6 +25,7 @@ from .const import (
     AUTH_METHOD_API_KEY,
     AUTH_METHOD_BASIC,
     AUTH_METHOD_JWT,
+    AUTH_METHOD_NETGATE,
     CONF_API_KEY,
     CONF_AUTH_METHOD,
     CONF_DEVICE_TRACKER_CONSIDER_HOME,
@@ -41,6 +42,9 @@ from .const import (
     DOMAIN,
 )
 from .pypfsense import (
+    BACKEND_NETGATE,
+    BACKEND_PFREST,
+    CONF_BACKEND,
     PfSenseAuthError,
     PfSenseConnectionError,
     PfSenseNotFoundError,
@@ -51,13 +55,28 @@ from .pypfsense import (
 _LOGGER = logging.getLogger(__name__)
 
 _EXAMPLE_URL = "https://pfsense.local:8444"
+_EXAMPLE_URLS = {AUTH_METHOD_NETGATE: "https://pfsense.local:8443"}
 
 # Credential fields shown per auth method (besides URL / verify_ssl / name).
 _CRED_FIELDS: dict[str, tuple[str, ...]] = {
     AUTH_METHOD_API_KEY: (CONF_API_KEY,),
     AUTH_METHOD_BASIC: (CONF_USERNAME, CONF_PASSWORD),
     AUTH_METHOD_JWT: (CONF_USERNAME, CONF_PASSWORD),
+    AUTH_METHOD_NETGATE: (CONF_USERNAME, CONF_PASSWORD),
 }
+
+
+def _backend_for(method: str) -> str:
+    return BACKEND_NETGATE if method == AUTH_METHOD_NETGATE else BACKEND_PFREST
+
+
+def _creds(method: str, user_input: dict) -> dict:
+    """The entry data that selects the backend and holds its credentials."""
+    return {
+        CONF_BACKEND: _backend_for(method),
+        CONF_AUTH_METHOD: method,
+        **{f: str(user_input[f]).strip() for f in _CRED_FIELDS[method]},
+    }
 
 
 class InvalidURL(Exception):
@@ -91,7 +110,8 @@ class ConfigFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
 
     # v3 == XML-RPC -> REST API v2 (api key only).
     # v4 == multi-method auth; entries carry ``auth_method``.
-    VERSION = 4
+    # v5 == entries carry ``backend`` (pfrest or the Netgate official API).
+    VERSION = 5
 
     def __init__(self) -> None:
         """Initialize the flow state."""
@@ -102,11 +122,16 @@ class ConfigFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_menu(
             step_id="user",
             menu_options=[
+                AUTH_METHOD_NETGATE,
                 AUTH_METHOD_API_KEY,
                 AUTH_METHOD_BASIC,
                 AUTH_METHOD_JWT,
             ],
         )
+
+    async def async_step_netgate(self, user_input=None):
+        """Configure Netgate's official API (Nexus, username + password)."""
+        return await self._auth_step(AUTH_METHOD_NETGATE, user_input)
 
     async def async_step_api_key(self, user_input=None):
         """Configure API-key auth."""
@@ -126,10 +151,7 @@ class ConfigFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         user_input = user_input or {}
 
         if user_input:
-            creds = {
-                CONF_AUTH_METHOD: method,
-                **{f: str(user_input[f]).strip() for f in _CRED_FIELDS[method]},
-            }
+            creds = _creds(method, user_input)
             verify_ssl = user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
             name = user_input.get(CONF_NAME) or None
             try:
@@ -181,7 +203,9 @@ class ConfigFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             step_id=method,
             data_schema=vol.Schema(schema),
             errors=errors,
-            description_placeholders={"example_url": _EXAMPLE_URL},
+            description_placeholders={
+                "example_url": _EXAMPLE_URLS.get(method, _EXAMPLE_URL)
+            },
         )
 
     async def async_step_import(self, user_input):
@@ -205,10 +229,7 @@ class ConfigFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             url = entry.data[CONF_URL]
             verify_ssl = entry.data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
-            creds = {
-                CONF_AUTH_METHOD: method,
-                **{f: str(user_input[f]).strip() for f in _CRED_FIELDS[method]},
-            }
+            creds = _creds(method, user_input)
             try:
                 system_info = await _get_system_info(self.hass, url, verify_ssl, creds)
             except PfSenseAuthError:

@@ -8,8 +8,9 @@ API exposes:
 
 - :class:`~.pfrest.PfRestClient` — the community REST API package
   (pfSense-pkg-RESTAPI v2, ``/api/v2``). End-of-life once PHP leaves pfSense.
-- ``NetgateClient`` (planned) — Netgate's official API served by the Nexus
-  controller (``/api``).
+- :class:`~.netgate.NetgateClient` — Netgate's official API served by the
+  Nexus controller (``/api``). Identity reads only so far; the rest raise
+  ``PfSenseUnsupportedError`` until later migration phases land.
 
 Return shapes are documented on the pfrest implementation, which is the
 reference until the Netgate backend lands.

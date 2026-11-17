@@ -156,6 +156,39 @@ any significant feature work.
   deleting those comments resets it to a fresh baseline. A failing source
   keeps its old value and fails the run.
 
+## Netgate API backend (`pypfsense/netgate.py`)
+
+Verified against the live 26.07 box:
+
+- **Login:** `POST /api/login {username, password}`, with both values
+  **base64**. Returns `{token, user, version, alerts}` and sets
+  `pfsense-refresh-token` (`Secure; HttpOnly; Path=/api/login/refresh`, 24 h).
+- **Access token:** a JWT sent as Bearer. `exp` is **+300 s**; there is no
+  `iat`. Claims: `addr, auth, exp, iss, keyid, username`.
+- **Refresh:** `POST /api/login/refresh {username}` with Bearer + cookie
+  returns a new 300 s token. The client refreshes 60 s before `exp`. If the
+  refresh fails (bad bearer, cookie expired), it logs in again.
+- **Errors:** `{errcode, errlevel, errmsg}`. An invalid or missing session is
+  **HTTP 400** `"session invalid, reauthenticate (...)"`, not 401, so errors
+  are typed from `errmsg` first. Bad credentials: 400 `"invalid credentials"`.
+  A user without API groups: `"unauthorized login"`, mapped to privilege.
+- **Lockout safety:** a rejected login is latched in the client (never
+  retried), and concurrent reads wait on one login under `_auth_lock`. Only
+  rebuilding the client (reauth/reload) tries again.
+- **Refresh cookie:** handled by hand (`Cookie:` header). aiohttp's default
+  jar drops cookies from bare-IP hosts.
+- **Identity:**
+  - `/system/status` → `status.ndi` (== pfrest `netgate_id`), `vndr` +
+    `machine` → platform `"Netgate 6100"` (same as pfrest; falls back to
+    `prod`), `osver` `"26.07-RELEASE - 20260807-1926"` → version/buildtime.
+  - `/system/setup` → `hostname`, `domain`. `status.host` is the FQDN.
+  - No serial (nothing reads it).
+- `_get_shared()` dedupes concurrent GETs of one path for 5 s.
+  `/system/status` feeds several methods.
+- Config flow: menu option `netgate` (`auth_method: netgate`,
+  `backend: netgate`). Config entry **VERSION 5**; v4→v5 stamps
+  `backend: pfrest`.
+
 ## Health checks (issue #14)
 
 - `health.py` holds a per-entry `HealthTracker` (`hass.data[DOMAIN][entry_id][HEALTH]`).
@@ -174,6 +207,8 @@ any significant feature work.
 - Health entities subscribe to the tracker (`async_add_listener`), not just the
   coordinator, because HA skips listener updates for back-to-back failed
   refreshes.
+- `PfSenseUnsupportedError` → check kind `unsupported`. It is shown per check
+  but is not a failure (status stays `ok`).
 - Poll-level repairs need `FAILURES_BEFORE_ISSUE` (3) consecutive failures.
   `pfrest_eol` fires when a pfrest entry sees the `pfnet-controller` service
   running (verified on the live box). Error kinds come from `classify()`; the
