@@ -165,6 +165,9 @@ split-on-trailing-comma = false
 # Tests reach into client / entity internals on purpose
 "tests/**" = ["PTH", "SLF001"]
 
+# Developer CLI tools report to the terminal
+"scripts/**" = ["T201"]
+
 # Temporary, mirroring Home Assistant core
 "custom_components/**" = ["PTH"]
 

@@ -30,6 +30,7 @@ from .const import (
     DOMAIN,
     SENSOR_TYPES,
 )
+from .health_entity import build_health_sensors
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -282,6 +283,7 @@ async def async_setup_entry(  # noqa: C901 - flat per-telemetry-type entity buil
                 )
                 entities.append(entity)
 
+        entities.extend(build_health_sensors(config_entry, coordinator))
         return entities
 
     cem = CoordinatorEntityManager(

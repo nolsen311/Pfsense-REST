@@ -86,5 +86,31 @@
         }
       }
     }
+  },
+  "issues": {
+    "cannot_connect": {
+      "title": "{name}: pfSense is not reachable",
+      "description": "Home Assistant has not reached the pfSense API at {url} for several polls. Last error: `{error}`.\n\nEntities show cached data for a few minutes, then become unavailable.\n\nTo fix:\n1. Check the firewall is up and that {url} opens from the Home Assistant host.\n2. **Check a firewall rule lets the Home Assistant host reach port {port} on the firewall.** pfSense's anti-lockout rule only covers the web GUI port; the Netgate Nexus API (usually 8443) needs its own LAN rule (Pass, TCP, source = the HA host, destination = LAN address, port {port}).\n3. If the address or port changed, delete and re-add the integration with the new URL.\n\nThis notice clears itself once a poll succeeds."
+    },
+    "tls_error": {
+      "title": "{name}: TLS certificate not trusted",
+      "description": "The pfSense API at {url} answered, but its TLS certificate could not be verified. Last error: `{error}`.\n\nTo fix, either:\n- give the firewall's API a certificate Home Assistant trusts (e.g. from the ACME package), or\n- if the firewall uses its default self-signed certificate, re-add the integration with **Verify SSL certificate** turned off.\n\nThis notice clears itself once a poll succeeds."
+    },
+    "api_missing": {
+      "title": "{name}: pfSense API not found",
+      "description": "{url} answered but has no pfSense API at that address (HTTP 404). Last error: `{error}`.\n\nTo fix:\n- **REST API package:** install it under System › Package Manager and enable it under System › REST API, and make sure the URL includes the port the API listens on (often the web GUI port).\n- **Netgate Nexus API:** enable it under System › Advanced › Netgate Nexus and use the HTTPS port shown there.\n\nThis notice clears itself once a poll succeeds."
+    },
+    "api_error": {
+      "title": "{name}: pfSense API is returning errors",
+      "description": "The pfSense API at {url} is reachable but keeps failing. Last error: `{error}`.\n\nCheck the firewall's system log and the API package's status. If the problem started after a pfSense or package update, report it with the integration's diagnostics download (Settings › Devices & services › pfSense › ⋮ › Download diagnostics).\n\nThis notice clears itself once a poll succeeds."
+    },
+    "privilege_missing": {
+      "title": "{name}: missing API privileges",
+      "description": "The account Home Assistant uses is not allowed to read: **{checks}**. Those parts of the integration show stale or no data; everything else keeps working.\n\nTo fix, in System › User Manager on the firewall:\n- **REST API package:** give the user the matching `api-v2-…-get` privileges (or `WebCfg - All pages`), plus the write privileges for anything you control from Home Assistant.\n- **Netgate Nexus API:** add the user to a Nexus group such as `mim_read_system`, `mim_read_firewall`, `mim_read_interfaces` or `mim_read_services` (or `mim_modify_…` for control).\n\nThis notice clears itself once those checks succeed."
+    },
+    "pfrest_eol": {
+      "title": "{name}: the REST API package is end-of-life",
+      "description": "This connection uses the community REST API package, which stops working once Netgate removes PHP from pfSense. This firewall is already running Netgate's built-in API (the Nexus controller), which is the supported replacement.\n\nNothing is broken yet. Support for the Netgate API is being added to this integration; follow {migration_url} for when you can switch."
+    }
   }
 }
