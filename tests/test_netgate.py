@@ -340,3 +340,17 @@ async def test_platform_falls_back_to_product(session) -> None:
     assert firmware["platform"] == "pfSense"
     assert (firmware["base"], firmware["patch"]) == ("26.07", "0")
     assert firmware["buildtime"] is None
+
+
+async def test_firmware_update_info_is_cached(session) -> None:
+    """The update status is fetched once per hour, not every poll."""
+    client = _client(session)
+    body = {"curr_base_system": "26.07", "latest_base_system": "26.07"}
+    with aioresponses() as m:
+        _login_ok(m, _jwt(time.time() + 300))
+        m.get(f"{API}/system/update", payload=body)
+        first = await client.get_firmware_update_info()
+        second = await client.get_firmware_update_info()
+        assert len(_calls(m, "GET", f"{API}/system/update")) == 1
+    assert first == second
+    assert first["base"]["installed_version"] == "26.07"

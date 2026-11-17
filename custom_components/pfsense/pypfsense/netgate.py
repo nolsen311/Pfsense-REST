@@ -63,6 +63,7 @@ REFRESH_COOKIE = "pfsense-refresh-token"
 REFRESH_MARGIN = 60
 # Responses several reads share within one poll are fetched once per window.
 SHARED_TTL = 5.0
+UPDATE_INFO_TTL = 3600.0
 
 
 class _SessionInvalid(PfSenseAuthError):
@@ -147,6 +148,7 @@ class NetgateClient:
         self._login_error: PfSenseAuthError | PfSensePrivilegeError | None = None
         self._write_lock = asyncio.Lock()
         self._shared: dict[str, tuple[float, asyncio.Future]] = {}
+        self._update_info: tuple[float, dict | None] | None = None
 
     # ---------------------------------------------------------------- http
 
@@ -414,8 +416,8 @@ class NetgateClient:
         """The legacy ``telemetry`` dict (see :func:`netgate_map.build_telemetry`).
 
         Interface and gateway status are required; system resource series,
-        gateway config and OpenVPN status degrade to empty values when
-        missing.
+        controller stats (load average), gateway config and OpenVPN status
+        degrade to empty values when missing.
         """
         (
             status,
@@ -426,6 +428,7 @@ class NetgateClient:
             processor,
             sensors,
             mbuf,
+            stats,
         ) = await asyncio.gather(
             self._status(),
             self._get_shared("/system/interfaces/status"),
@@ -435,6 +438,7 @@ class NetgateClient:
             self._optional(self._monitoring("processor")),
             self._optional(self._monitoring("sensors")),
             self._optional(self._monitoring("mbuf")),
+            self._optional(self._get("/controller/stats")),
         )
         return netgate_map.build_telemetry(
             status,
@@ -445,11 +449,21 @@ class NetgateClient:
             processor or {},
             sensors or {},
             mbuf or {},
+            netgate_map.load_average(stats),
         )
 
     async def get_firmware_update_info(self) -> dict | None:
-        """Not consumed by the poll yet (it stores ``None`` for both backends)."""
-        return None
+        """Base-system update status from ``/system/update``, cached for an hour.
+
+        pfSense checks its package repository on its own schedule; this only
+        reads the result, so there is no point asking every poll.
+        """
+        now = time.monotonic()
+        if self._update_info and now - self._update_info[0] < UPDATE_INFO_TTL:
+            return self._update_info[1]
+        info = netgate_map.firmware_update_info(await self._get("/system/update"))
+        self._update_info = (now, info)
+        return info
 
     async def get_dns_servers(self) -> list[str]:
         """System DNS servers from ``/system/setup``."""

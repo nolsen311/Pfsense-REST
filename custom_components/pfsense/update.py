@@ -76,8 +76,10 @@ class PfSenseUpdate(PfSenseEntity, UpdateEntity):
             f"{self.pfsense_device_unique_id}_{entity_description.key}"
         )
 
-        # Read-only: REST API v2 exposes no base-system "update available" flag
-        # and no progress-tracked upgrade, so no INSTALL feature is advertised.
+        # Read-only. The Netgate API reports installed/latest base-system
+        # versions (``/system/update``); pfrest has no such data, so the entity
+        # is unavailable there. Install is not offered: it would trigger a
+        # real upgrade and reboot, and is not tested on hardware.
 
     @property
     def device_class(self):

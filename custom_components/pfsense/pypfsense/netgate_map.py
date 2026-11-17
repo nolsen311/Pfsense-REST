@@ -12,6 +12,7 @@ lost to a consumer that wants it.
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 
@@ -111,11 +112,12 @@ def build_telemetry(
     processor: dict[str, float],
     sensors: dict[str, float],
     mbuf: dict[str, float],
+    load: dict | None = None,
 ) -> dict:
     """The legacy ``telemetry`` dict, same keys as pfrest's ``_build_telemetry``.
 
-    Not available from Nexus: load average and disk usage (left ``None``,
-    so those sensors are unavailable).
+    ``load`` comes from :func:`load_average`. Not available from Nexus: disk
+    usage (left ``None``, so that sensor is unavailable).
     """
     status = status or {}
     cpu_parts = [processor.get(k) for k in ("user", "nice", "system", "interrupt")]
@@ -155,11 +157,8 @@ def build_telemetry(
         "system": {
             "uptime": status.get("up"),
             "temp": temp,
-            "load_average": {
-                "one_minute": None,
-                "five_minute": None,
-                "fifteen_minute": None,
-            },
+            "load_average": load
+            or {"one_minute": None, "five_minute": None, "fifteen_minute": None},
         },
         "disk_used_percent": None,
         "filesystems": [],
@@ -403,3 +402,55 @@ def carp_interfaces(vips: Any, carp_status: Any) -> list[dict]:
         )
         out.append(entry)
     return out
+
+
+def firmware_update_info(body: Any) -> dict | None:
+    """``/system/update`` → the ``{"base": {...}}`` shape ``update.py`` reads.
+
+    ``version`` is the latest base system and ``installed_version`` the
+    running one (both like ``"26.07"``). ``None`` when the box reports no
+    versions at all.
+    """
+    if not isinstance(body, dict):
+        return None
+    installed = body.get("curr_base_system") or None
+    latest = body.get("latest_base_system") or None
+    if installed is None and latest is None:
+        return None
+    return {
+        "base": {
+            "installed_version": installed,
+            "version": latest,
+            "status_message": body.get("status_message") or None,
+            "check_error": body.get("update_check_error") or None,
+            "firmware_branch": body.get("firmware_branch") or None,
+            "boot_env": body.get("boot_env") or None,
+        }
+    }
+
+
+def _ewma(samples: list[float], minutes: int) -> float:
+    alpha = 1 - math.exp(-1 / minutes)
+    value = samples[0]
+    for sample in samples[1:]:
+        value += alpha * (sample - value)
+    return value
+
+
+def load_average(stats: Any) -> dict | None:
+    """Load averages from ``/controller/stats`` ``cpu_load``.
+
+    ``cpu_load`` is the last 60 one-minute load averages times 100, oldest first.
+    The newest is the 1-minute value. The box keeps no 5/15-minute series,
+    so those are exponential averages of the samples (the kernel's decay).
+    On a live 26.07 box they were within ~0.03 of ``sysctl vm.loadavg``.
+    """
+    raw = stats.get("cpu_load") if isinstance(stats, dict) else None
+    samples = [v / 100 for v in raw or [] if isinstance(v, (int, float))]
+    if not samples:
+        return None
+    return {
+        "one_minute": round(samples[-1], 2),
+        "five_minute": round(_ewma(samples, 5), 2),
+        "fifteen_minute": round(_ewma(samples, 15), 2),
+    }

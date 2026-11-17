@@ -17,6 +17,7 @@ from homeassistant.const import (
     CONF_VERIFY_SSL,
 )
 from homeassistant.core import callback
+from homeassistant.data_entry_flow import AbortFlow
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import homeassistant.helpers.config_validation as cv
 from homeassistant.util import slugify
@@ -64,6 +65,40 @@ _CRED_FIELDS: dict[str, tuple[str, ...]] = {
     AUTH_METHOD_JWT: (CONF_USERNAME, CONF_PASSWORD),
     AUTH_METHOD_NETGATE: (CONF_USERNAME, CONF_PASSWORD),
 }
+
+
+_AUTH_METHODS = (
+    AUTH_METHOD_NETGATE,
+    AUTH_METHOD_API_KEY,
+    AUTH_METHOD_BASIC,
+    AUTH_METHOD_JWT,
+)
+_NETGATE_PORT = 8443
+
+
+def _reconfigure_defaults(entry: config_entries.ConfigEntry, method: str) -> dict:
+    """Pre-fill the reconfigure form from the entry (never the secrets).
+
+    Keeps the URL when the backend stays the same. When switching to the
+    Netgate API, the host is kept and the port becomes 8443; when switching
+    back to the REST API package, the port is left for the user to enter.
+    """
+    data = entry.data
+    url = str(data.get(CONF_URL) or "")
+    if _backend_for(method) != data.get(CONF_BACKEND, BACKEND_PFREST) and url:
+        parts = urlparse(url)
+        host = parts.hostname or ""
+        if ":" in host:  # IPv6 literal
+            host = f"[{host}]"
+        port = f":{_NETGATE_PORT}" if method == AUTH_METHOD_NETGATE else ""
+        url = f"{parts.scheme or 'https'}://{host}{port}"
+    defaults = {
+        CONF_URL: url,
+        CONF_VERIFY_SSL: data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
+    }
+    if CONF_USERNAME in _CRED_FIELDS[method] and data.get(CONF_USERNAME):
+        defaults[CONF_USERNAME] = data[CONF_USERNAME]
+    return defaults
 
 
 def _backend_for(method: str) -> str:
@@ -121,12 +156,7 @@ class ConfigFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         """Let the user pick an authentication method."""
         return self.async_show_menu(
             step_id="user",
-            menu_options=[
-                AUTH_METHOD_NETGATE,
-                AUTH_METHOD_API_KEY,
-                AUTH_METHOD_BASIC,
-                AUTH_METHOD_JWT,
-            ],
+            menu_options=list(_AUTH_METHODS),
         )
 
     async def async_step_netgate(self, user_input=None):
@@ -145,12 +175,22 @@ class ConfigFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         """Configure JWT auth (token minted from username + password)."""
         return await self._auth_step(AUTH_METHOD_JWT, user_input)
 
-    async def _auth_step(self, method: str, user_input):
-        """Show the per-method form and validate the connection on submit."""
-        errors: dict[str, str] = {}
-        user_input = user_input or {}
+    async def _auth_step(self, method: str, user_input, reconfigure: bool = False):
+        """Show the per-method form and validate the connection on submit.
 
-        if user_input:
+        With ``reconfigure`` the existing entry is updated in place (any
+        backend or auth method, same firewall) instead of creating one.
+        """
+        errors: dict[str, str] = {}
+        submitted = user_input is not None
+        user_input = user_input or {}
+        defaults = (
+            _reconfigure_defaults(self._get_reconfigure_entry(), method)
+            if reconfigure and not submitted
+            else user_input
+        )
+
+        if submitted:
             creds = _creds(method, user_input)
             verify_ssl = user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
             name = user_input.get(CONF_NAME) or None
@@ -161,6 +201,13 @@ class ConfigFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(
                     slugify(system_info["netgate_device_id"])
                 )
+                data = {CONF_URL: url, CONF_VERIFY_SSL: verify_ssl, **creds}
+                if reconfigure:
+                    # Same firewall only: entity unique ids hang off its id.
+                    self._abort_if_unique_id_mismatch(reason="wrong_device")
+                    return self.async_update_reload_and_abort(
+                        self._get_reconfigure_entry(), data=data
+                    )
                 self._abort_if_unique_id_configured()
 
                 if name is None:
@@ -168,10 +215,7 @@ class ConfigFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                         system_info.get("hostname"), system_info.get("domain")
                     )
 
-                return self.async_create_entry(
-                    title=name,
-                    data={CONF_URL: url, CONF_VERIFY_SSL: verify_ssl, **creds},
-                )
+                return self.async_create_entry(title=name, data=data)
             except InvalidURL:
                 errors["base"] = "invalid_url_format"
             except PfSenseAuthError:
@@ -186,27 +230,53 @@ class ConfigFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "cannot_connect_ssl"
                 else:
                     errors["base"] = "cannot_connect"
+            except AbortFlow:
+                raise  # already_configured / wrong_device, not an error
             except Exception:
                 _LOGGER.exception("Unexpected error validating pfSense connection")
                 errors["base"] = "unknown"
 
         schema = {
-            vol.Required(CONF_URL, default=user_input.get(CONF_URL, "")): str,
-            **_cred_schema(method, user_input),
+            vol.Required(CONF_URL, default=defaults.get(CONF_URL, "")): str,
+            **_cred_schema(method, defaults),
             vol.Optional(
                 CONF_VERIFY_SSL,
-                default=user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
+                default=defaults.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
             ): bool,
-            vol.Optional(CONF_NAME, default=user_input.get(CONF_NAME, "")): str,
         }
+        if not reconfigure:
+            schema[vol.Optional(CONF_NAME, default=defaults.get(CONF_NAME, ""))] = str
         return self.async_show_form(
-            step_id=method,
+            step_id=f"reconfigure_{method}" if reconfigure else method,
             data_schema=vol.Schema(schema),
             errors=errors,
             description_placeholders={
                 "example_url": _EXAMPLE_URLS.get(method, _EXAMPLE_URL)
             },
         )
+
+    async def async_step_reconfigure(self, user_input=None):
+        """Change how an entry connects: switch backend/auth, URL or credentials."""
+        return self.async_show_menu(
+            step_id="reconfigure",
+            menu_options=[f"reconfigure_{m}" for m in _AUTH_METHODS],
+        )
+
+    async def async_step_reconfigure_netgate(self, user_input=None):
+        """Reconfigure onto Netgate's official API."""
+        return await self._auth_step(AUTH_METHOD_NETGATE, user_input, reconfigure=True)
+
+    async def async_step_reconfigure_api_key(self, user_input=None):
+        """Reconfigure onto the REST API package with an API key."""
+        return await self._auth_step(AUTH_METHOD_API_KEY, user_input, reconfigure=True)
+
+    async def async_step_reconfigure_basic(self, user_input=None):
+        """Reconfigure onto the REST API package with username + password."""
+        return await self._auth_step(AUTH_METHOD_BASIC, user_input, reconfigure=True)
+
+    async def async_step_reconfigure_jwt(self, user_input=None):
+        """Reconfigure onto the REST API package with JWT."""
+        return await self._auth_step(AUTH_METHOD_JWT, user_input, reconfigure=True)
 
     async def async_step_import(self, user_input):
         """Handle YAML import (legacy entries carried an API key)."""
