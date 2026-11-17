@@ -278,6 +278,12 @@ class PfRestClient:
             "package install is not supported by the REST API package backend"
         )
 
+    async def get_certificates(self) -> list[dict]:
+        """Not implemented for the REST API package backend."""
+        raise PfSenseUnsupportedError(
+            "certificate expiry is only available on the Netgate API backend"
+        )
+
     async def get_dns_servers(self) -> list[str]:
         """Return the configured system DNS servers."""
         data = await self._get("/system/dns")

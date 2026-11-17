@@ -154,6 +154,7 @@ class NetgateClient:
         self._update_info: tuple[float, dict | None] | None = None
         self._upgrade_from: str | None = None
         self._packages: tuple[float, list[dict]] | None = None
+        self._certificates: tuple[float, list[dict]] | None = None
         self._package_upgrading: dict[str, str] = {}
 
     # ---------------------------------------------------------------- http
@@ -538,6 +539,15 @@ class NetgateClient:
             )
         self._package_upgrading[name] = pkg["installed_version"]
         self._packages = None
+
+    async def get_certificates(self) -> list[dict]:
+        """In-use and server certificates with their expiry, cached for an hour."""
+        now = time.monotonic()
+        if self._certificates and now - self._certificates[0] < UPDATE_INFO_TTL:
+            return self._certificates[1]
+        certs = netgate_map.certificates(await self._get("/system/certificates"))
+        self._certificates = (now, certs)
+        return certs
 
     async def get_dns_servers(self) -> list[str]:
         """System DNS servers from ``/system/setup``."""

@@ -325,3 +325,16 @@ async def test_pfrest_packages_are_unsupported() -> None:
         await client.get_installed_packages()
     with pytest.raises(PfSenseUnsupportedError):
         await client.install_package_update("acme")
+
+
+async def test_pfrest_certificates_are_unsupported() -> None:
+    """Pfrest reports certificate expiry as unsupported."""
+    from custom_components.pfsense.pypfsense import (  # noqa: PLC0415
+        PfRestClient,
+        PfSenseUnsupportedError,
+    )
+
+    with pytest.raises(PfSenseUnsupportedError):
+        await PfRestClient(
+            "https://pf.example:8444", object(), api_key="k"
+        ).get_certificates()

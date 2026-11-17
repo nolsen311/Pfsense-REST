@@ -189,6 +189,14 @@ want in the entity settings.
   package to the latest version from pfSense's package catalog. The list is
   checked once an hour.
 
+- **Certificate \<name\> Expires** (Netgate API, diagnostic): when each
+  certificate expires, with `days_left`, what uses it, and the issuer as
+  attributes. There's one per in-use or server certificate; ones nothing uses
+  start disabled. A **Certificate expiring** repair appears when an in-use
+  certificate is within 14 days of expiry, and clears itself once it's
+  renewed. The list is read once an hour. Private keys are never read into
+  Home Assistant.
+
 ### Health (diagnostic)
 
 Shown under the device's **Diagnostic** section, and they stay available while
