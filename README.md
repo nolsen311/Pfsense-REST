@@ -194,6 +194,13 @@ want in the entity settings.
   package to the latest version from pfSense's package catalog. The list is
   checked once an hour.
 
+- **Dynamic DNS \<hostname\>** (Netgate API): the address each Dynamic DNS
+  entry last registered, with the provider, interface, IPv4/IPv6 and the time
+  of the last successful update as attributes. Disabled entries start
+  disabled. The address comes from pfSense's update cache through the shell,
+  so it needs a user with shell access. Without it the sensor has no value. It
+  is read every 5 minutes. Credentials are never read into Home Assistant.
+
 ### Health (diagnostic)
 
 Shown under the device's **Diagnostic** section, and they stay available while

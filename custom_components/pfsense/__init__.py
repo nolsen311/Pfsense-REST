@@ -378,6 +378,7 @@ _POLL_READS = (
     ("firmware", "firmware_update_info", "get_firmware_update_info", None),
     ("packages", "packages", "get_installed_packages", []),
     ("notices", "notices", "get_notices", None),
+    ("dyndns", "dyndns", "get_dyndns", []),
 )
 # Without these the device cannot be identified, so their failure fails the
 # whole poll (and the coordinator falls back to the cache).

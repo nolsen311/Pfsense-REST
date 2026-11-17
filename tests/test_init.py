@@ -59,6 +59,7 @@ def _full_client_mock():
     client.get_nat_outbound_rules.return_value = []
     client.get_firmware_update_info.return_value = None
     client.get_installed_packages.return_value = []
+    client.get_dyndns.return_value = []
     client.get_notices.return_value = {"count": 0, "latest": []}
     client.get_arp_table.return_value = []
     return client
@@ -420,4 +421,33 @@ async def test_package_entity_has_no_install_on_pfrest(hass: HomeAssistant):
     await _setup(hass, entry, client)
     state = hass.states.get("update.router_local_package_acme")
     assert not state.attributes["supported_features"] & UpdateEntityFeature.INSTALL
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.asyncio
+async def test_dyndns_sensor(hass: HomeAssistant):
+    """A dynamic DNS entry shows its registered address and last update."""
+    client = _full_client_mock()
+    client.get_dyndns.return_value = [
+        {
+            "id": "0",
+            "type": "cloudflare",
+            "interface": "wan",
+            "hostname": "@.example.com",
+            "description": None,
+            "enabled": True,
+            "ip": "203.0.113.7",
+            "ipv6": "2001:db8::1",
+            "last_update": 1793001661,
+            "cache_readable": True,
+        }
+    ]
+    entry = _netgate_entry()
+    await _setup(hass, entry, client)
+    state = hass.states.get("sensor.router_local_dynamic_dns_example_com")
+    assert state.state == "203.0.113.7"
+    assert state.attributes["provider"] == "cloudflare"
+    assert state.attributes["ipv6"] == "2001:db8::1"
+    assert state.attributes["last_update"].startswith("2026-")
+    assert "password" not in state.attributes
     assert await hass.config_entries.async_unload(entry.entry_id)

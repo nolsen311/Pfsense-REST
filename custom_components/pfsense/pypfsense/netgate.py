@@ -73,6 +73,7 @@ SHARED_TTL = 5.0
 UPDATE_INFO_TTL = 3600.0
 # While an upgrade is running, re-read the update status this often so the
 # new version is noticed soon after the reboot.
+DYNDNS_TTL = 300
 UPDATE_INFO_TTL_UPGRADING = 60.0
 
 
@@ -161,6 +162,7 @@ class NetgateClient:
         self._update_info: tuple[float, dict | None] | None = None
         self._upgrade_from: str | None = None
         self._packages: tuple[float, list[dict]] | None = None
+        self._dyndns: tuple[float, list[dict]] | None = None
         self._package_upgrading: dict[str, str] = {}
 
     # ---------------------------------------------------------------- http
@@ -545,6 +547,54 @@ class NetgateClient:
             )
         self._package_upgrading[name] = pkg["installed_version"]
         self._packages = None
+
+    async def get_dyndns(self) -> list[dict]:
+        """Dynamic DNS entries with their last update, cached for 5 minutes.
+
+        The entry list comes from ``/services/dyndns`` (credentials dropped).
+        The address and time of the last successful update come from
+        pfSense's ``/conf/dyndns_*.cache`` files, read in one shell call.
+        Without shell access the entries are still returned, with no address
+        and ``cache_readable`` false.
+        """
+        now = time.monotonic()
+        if self._dyndns and now - self._dyndns[0] < DYNDNS_TTL:
+            return self._dyndns[1]
+        entries = netgate_map.dyndns_entries(await self._get("/services/dyndns"))
+        caches: dict[str, list[str]] = {}
+        readable = False
+        if entries:
+            lines = []
+            for entry in entries:
+                path = netgate_map.dyndns_cache_file(entry)
+                lines.append(
+                    f"printf '%s\\t%s\\t%s\\n' {_shq(entry['id'])}"
+                    f' "$(cat {_shq(path)} 2>/dev/null)"'
+                    f' "$(cat {_shq(path.removesuffix(".cache") + "_v6.cache")} 2>/dev/null)"'
+                )
+            try:
+                out = await self.exec_command("; ".join(lines))
+            except (PfSensePrivilegeError, PfSenseNotFoundError) as err:
+                _LOGGER.debug("Dynamic DNS cache unreadable: %s", err)
+            else:
+                readable = True
+                for line in out.splitlines():
+                    parts = line.split("\t")
+                    if len(parts) == 3:
+                        caches[parts[0]] = parts[1:]
+        for entry in entries:
+            ipv4_text, ipv6_text = caches.get(entry["id"], ["", ""])
+            ip, when = netgate_map.parse_dyndns_cache(ipv4_text)
+            ipv6, when6 = netgate_map.parse_dyndns_cache(ipv6_text)
+            stamps = [t for t in (when, when6) if t]
+            entry.update(
+                ip=ip,
+                ipv6=ipv6,
+                last_update=max(stamps) if stamps else None,
+                cache_readable=readable,
+            )
+        self._dyndns = (now, entries)
+        return entries
 
     async def get_notices(self) -> dict:
         """Pending pfSense notices: ``{"count", "latest": [...]}`` (newest 3).
