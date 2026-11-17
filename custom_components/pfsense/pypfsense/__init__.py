@@ -3,7 +3,7 @@
 Two backends implement :class:`PfSenseBackend`:
 
 - ``pfrest`` — :class:`PfRestClient`, the community REST API package v2.
-- ``netgate`` — Netgate's official (Nexus) API. Not implemented yet.
+- ``netgate`` — :class:`NetgateClient`, Netgate's official (Nexus) API.
 
 :func:`client_from_config` picks the backend from a config-entry mapping, so the
 integration never names a concrete client class. ``Client`` is kept as an alias
@@ -22,7 +22,9 @@ from .errors import (
     PfSenseError,
     PfSenseNotFoundError,
     PfSensePrivilegeError,
+    PfSenseUnsupportedError,
 )
+from .netgate import NetgateClient
 from .pfrest import (
     API_BASE,
     AUTH_API_KEY,
@@ -49,6 +51,7 @@ __all__ = [
     "CONF_BACKEND",
     "DEFAULT_TIMEOUT",
     "Client",
+    "NetgateClient",
     "PfRestClient",
     "PfSenseAPIError",
     "PfSenseAuthError",
@@ -57,6 +60,7 @@ __all__ = [
     "PfSenseError",
     "PfSenseNotFoundError",
     "PfSensePrivilegeError",
+    "PfSenseUnsupportedError",
     "_build_telemetry",
     "client_from_config",
     "dict_get",
@@ -89,5 +93,11 @@ def client_from_config(
             verify_ssl=verify_ssl,
         )
     if backend == BACKEND_NETGATE:
-        raise NotImplementedError("the Netgate (Nexus) API backend is not built yet")
+        return NetgateClient(
+            url,
+            session,
+            username=data.get("username"),
+            password=data.get("password"),
+            verify_ssl=verify_ssl,
+        )
     raise PfSenseError(f"unknown pfSense API backend {backend!r}")

@@ -156,6 +156,73 @@ any significant feature work.
   deleting those comments resets it to a fresh baseline. A failing source
   keeps its old value and fails the run.
 
+## Netgate API backend (`pypfsense/netgate.py`)
+
+Verified against the live 26.07 box:
+
+- **Login:** `POST /api/login {username, password}`, with both values
+  **base64**. Returns `{token, user, version, alerts}` and sets
+  `pfsense-refresh-token` (`Secure; HttpOnly; Path=/api/login/refresh`, 24 h).
+- **Access token:** a JWT sent as Bearer. `exp` is **+300 s**; there is no
+  `iat`. Claims: `addr, auth, exp, iss, keyid, username`.
+- **Refresh:** `POST /api/login/refresh {username}` with Bearer + cookie
+  returns a new 300 s token. The client refreshes 60 s before `exp`. If the
+  refresh fails (bad bearer, cookie expired), it logs in again.
+- **Errors:** `{errcode, errlevel, errmsg}`. An invalid or missing session is
+  **HTTP 400** `"session invalid, reauthenticate (...)"`, not 401, so errors
+  are typed from `errmsg` first. Bad credentials: 400 `"invalid credentials"`.
+  A user without API groups: `"unauthorized login"`, mapped to privilege.
+- **Lockout safety:** a rejected login is latched in the client (never
+  retried), and concurrent reads wait on one login under `_auth_lock`. Only
+  rebuilding the client (reauth/reload) tries again.
+- **Refresh cookie:** handled by hand (`Cookie:` header). aiohttp's default
+  jar drops cookies from bare-IP hosts.
+- **Identity:**
+  - `/system/status` → `status.ndi` (== pfrest `netgate_id`), `vndr` +
+    `machine` → platform `"Netgate 6100"` (same as pfrest; falls back to
+    `prod`), `osver` `"26.07-RELEASE - 20260807-1926"` → version/buildtime.
+  - `/system/setup` → `hostname`, `domain`. `status.host` is the FQDN.
+  - No serial (nothing reads it).
+- **Reads (phase 2)** are mapped in `pypfsense/netgate_map.py`, which holds
+  pure functions with unit tests. Verified on the live box against pfrest:
+  every entity key matches (interfaces, gateways, services, all 59
+  filter-rule switches, ARP MACs, WAN IP, DNS servers).
+  - **Filter rules:** fetched per interface. Use the identities from
+    `/system/interfaces/status` (the rules listing omits disabled interfaces),
+    the groups from `interface_mappings`, plus `floating`. Drop `readonly` /
+    tracker `NNNNN-NNNNN` system rules.
+  - **Disabled flags:** Nexus reports them correctly. On the live box 14
+    rules differ from pfrest, which is the pfrest bug.
+  - **Telemetry:**
+    - CPU = sum of user+nice+system+interrupt from
+      `POST /system/monitoring {scope: system, dataset: processor}`. That's a
+      60 s average (min resolution), so it differs from pfrest's
+      instantaneous sample.
+    - Temperature = hottest `cpu_N` from `sensors`, not `thermal_tz0` (a
+      cooler board sensor).
+    - mbuf = total/max from `mbuf`.
+    - Memory = 1 − fram/ram from `/system/status`, about 3 points higher than
+      pfrest.
+    - The `memory` dataset returns zeros. `/mim/device/identity` `devinfo`
+      usage figures are stale or zero, so don't use them.
+    - No source for load average or disk usage (sensors unavailable).
+  - **Gateways:** status `Online` → lower-cased. delay/loss are strings with
+    units (`"14.995ms"`, `"0.0%"`) → parsed. No `srcip`/`substatus` (keys kept,
+    so the attributes don't KeyError).
+  - **Leases / ARP:** lease MACs are upper-case and get lower-cased. ARP has
+    no hostname; `dnsresolve` stands in. `/diag/arp` takes ~5.6 s (reverse
+    DNS, no option to skip), so the device-tracker poll takes ~6.5 s.
+  - **New entities vs pfrest:** `coredns` service switch; NAT outbound
+    switches (pfrest's `created_time` is null).
+  - **Latency:** a full poll takes ~9 s (rules ~1.5 s per interface, NAT
+    ~1.5 s each, `/system/status` ~2 s; the box partly serializes them).
+    Keep the scan interval ≥ 30 s.
+- `_get_shared()` dedupes concurrent GETs of one path for 5 s.
+  `/system/status` feeds several methods.
+- Config flow: menu option `netgate` (`auth_method: netgate`,
+  `backend: netgate`). Config entry **VERSION 5**; v4→v5 stamps
+  `backend: pfrest`.
+
 ## Health checks (issue #14)
 
 - `health.py` holds a per-entry `HealthTracker` (`hass.data[DOMAIN][entry_id][HEALTH]`).
@@ -174,6 +241,8 @@ any significant feature work.
 - Health entities subscribe to the tracker (`async_add_listener`), not just the
   coordinator, because HA skips listener updates for back-to-back failed
   refreshes.
+- `PfSenseUnsupportedError` → check kind `unsupported`. It is shown per check
+  but is not a failure (status stays `ok`).
 - Poll-level repairs need `FAILURES_BEFORE_ISSUE` (3) consecutive failures.
   `pfrest_eol` fires when a pfrest entry sees the `pfnet-controller` service
   running (verified on the live box). Error kinds come from `classify()`; the

@@ -37,6 +37,7 @@ from .pypfsense import (
     PfSenseConnectionError,
     PfSenseNotFoundError,
     PfSensePrivilegeError,
+    PfSenseUnsupportedError,
 )
 
 # Error kinds -------------------------------------------------------------
@@ -48,6 +49,8 @@ KIND_PRIVILEGE = "privilege_missing"
 KIND_API_MISSING = "api_missing"
 KIND_API_ERROR = "api_error"
 KIND_UNKNOWN = "unknown_error"
+# Not a failure: the backend's API cannot provide this capability.
+KIND_UNSUPPORTED = "unsupported"
 
 # Overall status (the integration_status sensor's options) ---------------
 STATUS_STARTING = "starting"
@@ -94,6 +97,8 @@ MIGRATION_URL = "https://github.com/nolsen311/Pfsense-REST/issues/11"
 
 def classify(err: BaseException) -> str:
     """Reduce any poll exception to one of the error kinds."""
+    if isinstance(err, PfSenseUnsupportedError):
+        return KIND_UNSUPPORTED
     if isinstance(err, PfSenseAuthError):
         return KIND_AUTH
     if isinstance(err, PfSensePrivilegeError):
@@ -236,7 +241,11 @@ class HealthTracker:
     @property
     def failing_checks(self) -> list[str]:
         """Names of capabilities whose latest check failed."""
-        return sorted(name for name, c in self.checks.items() if not c.ok)
+        return sorted(
+            name
+            for name, c in self.checks.items()
+            if not c.ok and c.kind != KIND_UNSUPPORTED
+        )
 
     @property
     def cache_age(self) -> float | None:

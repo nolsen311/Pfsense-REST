@@ -331,6 +331,9 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     (``slugify(netgate id)``) is unchanged, so entities re-attach afterwards.
     v3 -> v4: stamp ``auth_method`` on entries that predate the multi-method
     config flow. Every v3 entry used an API key.
+    v4 -> v5: stamp ``backend``. Every v4 entry uses pfrest; v5 adds Netgate's
+    official API. The bump also stops an older release (which would treat a
+    Netgate entry as pfrest) from loading a v5 entry.
     """
     data = dict(config_entry.data)
 
@@ -349,6 +352,10 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     if config_entry.version == 3:
         data.setdefault(CONF_AUTH_METHOD, AUTH_METHOD_API_KEY)
         hass.config_entries.async_update_entry(config_entry, data=data, version=4)
+
+    if config_entry.version == 4:
+        data.setdefault(CONF_BACKEND, BACKEND_PFREST)
+        hass.config_entries.async_update_entry(config_entry, data=data, version=5)
 
     return True
 

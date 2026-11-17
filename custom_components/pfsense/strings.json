@@ -4,11 +4,23 @@
     "step": {
       "user": {
         "title": "Connect to the pfSense firewall / router",
-        "description": "Choose how Home Assistant should authenticate to the pfSense REST API. Only one method is used per connection.",
+        "description": "Choose the API Home Assistant should use. **Netgate API** is pfSense's built-in API (the Nexus controller, standard from 26.10). The other options use the community REST API package, which stops working when Netgate removes PHP from pfSense.",
         "menu_options": {
-          "api_key": "API key",
-          "basic": "Username and password",
-          "jwt": "JWT (from username and password)"
+          "netgate": "Netgate API (recommended for 26.07 and newer)",
+          "api_key": "REST API package — aPI key",
+          "basic": "REST API package — username and password",
+          "jwt": "REST API package — jWT (from username and password)"
+        }
+      },
+      "netgate": {
+        "title": "Netgate API (Nexus)",
+        "description": "Enter the firewall's Netgate API address, including the port (usually 8443, e.g. {example_url}), and a pfSense user's credentials. The user must be in the `admins` group or in the Nexus `mim_…` groups for the features you use.\n\nThe API port is **not** covered by pfSense's anti-lockout rule: if Home Assistant cannot connect, add a LAN pass rule from the Home Assistant host to that port.",
+        "data": {
+          "url": "URL",
+          "username": "Username",
+          "password": "Password",
+          "name": "Firewall name",
+          "verify_ssl": "Verify SSL certificate"
         }
       },
       "api_key": {
@@ -56,10 +68,10 @@
     "error": {
       "cannot_connect": "Failed to connect",
       "cannot_connect_ssl": "SSL failure",
-      "invalid_auth": "Authentication failed — check the credentials, and that this method is enabled at System › REST API › Settings",
+      "invalid_auth": "Authentication failed — check the credentials. For the REST API package, also check that this method is enabled at System › REST API › Settings.",
       "invalid_url_format": "Invalid URL format",
-      "privilege_missing": "The account lacks the privileges required for this integration",
-      "api_not_found": "REST API not found at that URL - check the address, the port, and that the REST API package is installed",
+      "privilege_missing": "The account lacks the privileges this integration needs (REST API package: the api-v2 privileges; Netgate API: the admins group or the mim_… groups).",
+      "api_not_found": "No pfSense API at that URL — check the address and port, and that the API is enabled (Netgate API: usually port 8443; REST API package: install and enable it).",
       "unknown": "Unexpected error"
     },
     "abort": {

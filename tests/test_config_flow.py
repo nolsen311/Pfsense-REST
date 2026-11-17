@@ -9,13 +9,19 @@ from custom_components.pfsense.const import (
     AUTH_METHOD_API_KEY,
     AUTH_METHOD_BASIC,
     AUTH_METHOD_JWT,
+    AUTH_METHOD_NETGATE,
     CONF_API_KEY,
     CONF_AUTH_METHOD,
     CONF_DEVICE_TRACKER_ENABLED,
     CONF_DEVICES,
     DOMAIN,
 )
-from custom_components.pfsense.pypfsense import PfSenseAuthError
+from custom_components.pfsense.pypfsense import (
+    BACKEND_NETGATE,
+    BACKEND_PFREST,
+    CONF_BACKEND,
+    PfSenseAuthError,
+)
 from homeassistant.const import CONF_PASSWORD, CONF_URL, CONF_USERNAME, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -73,6 +79,7 @@ async def test_form_api_key_success(hass: HomeAssistant):
     assert result["data"] == {
         CONF_URL: "https://192.168.1.1:8444",
         CONF_VERIFY_SSL: False,
+        CONF_BACKEND: BACKEND_PFREST,
         CONF_AUTH_METHOD: AUTH_METHOD_API_KEY,
         CONF_API_KEY: "abc123",
     }
@@ -101,6 +108,7 @@ async def test_form_basic_success(hass: HomeAssistant):
     assert result["data"] == {
         CONF_URL: "https://192.168.1.1:8444",
         CONF_VERIFY_SSL: False,
+        CONF_BACKEND: BACKEND_PFREST,
         CONF_AUTH_METHOD: AUTH_METHOD_BASIC,
         CONF_USERNAME: "admin",
         CONF_PASSWORD: "pfsense",
@@ -216,3 +224,56 @@ async def test_options_flow(hass: HomeAssistant):
         )
     assert result3["type"] == FlowResultType.CREATE_ENTRY
     assert entry.options[CONF_DEVICES] == ["11:22:33:44:55:66"]
+
+
+@pytest.mark.asyncio
+async def test_form_netgate_success(hass: HomeAssistant):
+    """The Netgate API path stores backend=netgate and the login credentials."""
+    form = await _menu_pick(hass, AUTH_METHOD_NETGATE)
+    assert form["step_id"] == AUTH_METHOD_NETGATE
+    assert form["description_placeholders"]["example_url"].endswith(":8443")
+
+    with (
+        _patch_client(_client_mock()) as factory,
+        patch("custom_components.pfsense.async_setup_entry", return_value=True),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            form["flow_id"],
+            {
+                CONF_URL: "https://192.168.1.1:8443/",
+                CONF_USERNAME: "ha",
+                CONF_PASSWORD: "pw",
+                CONF_VERIFY_SSL: False,
+            },
+        )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["result"].version == 5
+    assert result["data"] == {
+        CONF_URL: "https://192.168.1.1:8443",
+        CONF_VERIFY_SSL: False,
+        CONF_BACKEND: BACKEND_NETGATE,
+        CONF_AUTH_METHOD: AUTH_METHOD_NETGATE,
+        CONF_USERNAME: "ha",
+        CONF_PASSWORD: "pw",
+    }
+    assert factory.call_args.args[2][CONF_BACKEND] == BACKEND_NETGATE
+
+
+@pytest.mark.asyncio
+async def test_form_netgate_invalid_auth(hass: HomeAssistant):
+    """A rejected Netgate login shows invalid_auth on the same form."""
+    form = await _menu_pick(hass, AUTH_METHOD_NETGATE)
+    client = _client_mock()
+    client.get_system_info.side_effect = PfSenseAuthError("invalid credentials")
+    with _patch_client(client):
+        result = await hass.config_entries.flow.async_configure(
+            form["flow_id"],
+            {
+                CONF_URL: "https://192.168.1.1:8443",
+                CONF_USERNAME: "ha",
+                CONF_PASSWORD: "wrong",
+            },
+        )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == AUTH_METHOD_NETGATE
+    assert result["errors"] == {"base": "invalid_auth"}

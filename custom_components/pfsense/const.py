@@ -25,7 +25,14 @@ CONF_AUTH_METHOD = "auth_method"
 AUTH_METHOD_API_KEY = "api_key"
 AUTH_METHOD_BASIC = "basic"
 AUTH_METHOD_JWT = "jwt"
-AUTH_METHODS = (AUTH_METHOD_API_KEY, AUTH_METHOD_BASIC, AUTH_METHOD_JWT)
+# Netgate official API: username/password login to the Nexus controller.
+AUTH_METHOD_NETGATE = "netgate"
+AUTH_METHODS = (
+    AUTH_METHOD_API_KEY,
+    AUTH_METHOD_BASIC,
+    AUTH_METHOD_JWT,
+    AUTH_METHOD_NETGATE,
+)
 
 UNDO_UPDATE_LISTENER = "undo_update_listener"
 

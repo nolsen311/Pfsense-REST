@@ -8,6 +8,7 @@ from custom_components.pfsense.pypfsense import (
     BACKEND_NETGATE,
     BACKEND_PFREST,
     Client,
+    NetgateClient,
     PfRestClient,
     PfSenseBackend,
     PfSenseError,
@@ -53,10 +54,21 @@ def test_client_from_config_defaults_to_pfrest(data: dict) -> None:
     assert isinstance(client_from_config(BASE, object(), data, True), PfRestClient)
 
 
-def test_client_from_config_netgate_not_built_yet() -> None:
-    """The Netgate backend is declared but not implemented in this phase."""
-    with pytest.raises(NotImplementedError):
-        client_from_config(BASE, object(), {"backend": BACKEND_NETGATE}, True)
+def test_client_from_config_netgate() -> None:
+    """``backend: netgate`` builds the Netgate client from username/password."""
+    data = {"backend": BACKEND_NETGATE, "username": "u", "password": "p"}
+    assert isinstance(client_from_config(BASE, object(), data, True), NetgateClient)
+
+
+def test_netgate_client_implements_the_backend_interface() -> None:
+    """NetgateClient has every PfSenseBackend method, with pfrest's signatures."""
+    assert set(_public_coroutines(NetgateClient)) == set(
+        _public_coroutines(PfRestClient)
+    )
+    for name in _public_coroutines(PfRestClient):
+        netgate = inspect.signature(getattr(NetgateClient, name)).parameters
+        pfrest = inspect.signature(getattr(PfRestClient, name)).parameters
+        assert list(netgate.values()) == list(pfrest.values()), name
 
 
 def test_client_from_config_unknown_backend() -> None:
