@@ -9,11 +9,11 @@ API exposes:
 - :class:`~.pfrest.PfRestClient` — the community REST API package
   (pfSense-pkg-RESTAPI v2, ``/api/v2``). End-of-life once PHP leaves pfSense.
 - :class:`~.netgate.NetgateClient` — Netgate's official API served by the
-  Nexus controller (``/api``). Identity reads only so far; the rest raise
-  ``PfSenseUnsupportedError`` until later migration phases land.
+  Nexus controller (``/api``). Feature-complete; mapping to these shapes lives
+  in ``netgate_map.py``.
 
-Return shapes are documented on the pfrest implementation, which is the
-reference until the Netgate backend lands.
+Return shapes are documented on the pfrest implementation. A backend that
+cannot do something raises ``PfSenseUnsupportedError``.
 """
 
 from __future__ import annotations
@@ -38,6 +38,9 @@ class PfSenseBackend(Protocol):
 
     async def get_firmware_update_info(self) -> dict | None:
         """Return base-system update info, or ``None`` when unavailable."""
+
+    async def start_firmware_update(self) -> None:
+        """Start a base-system upgrade (the firewall reboots during it)."""
 
     async def get_dns_servers(self) -> list[str]:
         """Return the configured system DNS servers."""

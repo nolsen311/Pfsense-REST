@@ -33,6 +33,7 @@ from .errors import (
     PfSenseConnectionError,
     PfSenseNotFoundError,
     PfSensePrivilegeError,
+    PfSenseUnsupportedError,
 )
 from .util import (
     _as_network,
@@ -254,6 +255,12 @@ class PfRestClient:
         installed, so it is not a safe substitute here.
         """
         return None
+
+    async def start_firmware_update(self) -> None:
+        """Not available: REST v2 has no progress-tracked base-system upgrade."""
+        raise PfSenseUnsupportedError(
+            "firmware upgrade is not supported by the REST API package backend"
+        )
 
     async def get_dns_servers(self) -> list[str]:
         """Return the configured system DNS servers."""

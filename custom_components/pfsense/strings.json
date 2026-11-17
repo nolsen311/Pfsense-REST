@@ -138,7 +138,11 @@
           "device_tracker_enabled": "Enable Device Tracker",
           "device_tracker_scan_interval": "Device Tracker Scan Interval (seconds)",
           "device_tracker_consider_home": "Device Tracker Consider Home (seconds)",
-          "rule_switch_kill_states": "Reset matching states when a rule switch is toggled"
+          "rule_switch_kill_states": "Reset matching states when a rule switch is toggled",
+          "firmware_install_unverified": "Allow firmware install from Home Assistant (experimental, not yet verified)"
+        },
+        "data_description": {
+          "firmware_install_unverified": "Adds an Install button to the firmware update entity (Netgate API only). The upgrade call is built from Netgate's API documentation and has not been tested on a real upgrade yet. The firewall reboots while upgrading. Leave this off unless you are ready to recover from the console if it goes wrong."
         }
       },
       "device_tracker": {

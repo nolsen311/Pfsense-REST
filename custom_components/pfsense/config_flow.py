@@ -33,10 +33,12 @@ from .const import (
     CONF_DEVICE_TRACKER_ENABLED,
     CONF_DEVICE_TRACKER_SCAN_INTERVAL,
     CONF_DEVICES,
+    CONF_FIRMWARE_INSTALL_UNVERIFIED,
     CONF_RULE_SWITCH_KILL_STATES,
     DEFAULT_DEVICE_TRACKER_CONSIDER_HOME,
     DEFAULT_DEVICE_TRACKER_ENABLED,
     DEFAULT_DEVICE_TRACKER_SCAN_INTERVAL,
+    DEFAULT_FIRMWARE_INSTALL_UNVERIFIED,
     DEFAULT_RULE_SWITCH_KILL_STATES,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_VERIFY_SSL,
@@ -385,6 +387,16 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 ),
             ): bool,
         }
+        if self.config_entry.data.get(CONF_BACKEND) == BACKEND_NETGATE:
+            base_schema[
+                vol.Optional(
+                    CONF_FIRMWARE_INSTALL_UNVERIFIED,
+                    default=opts.get(
+                        CONF_FIRMWARE_INSTALL_UNVERIFIED,
+                        DEFAULT_FIRMWARE_INSTALL_UNVERIFIED,
+                    ),
+                )
+            ] = bool
         return self.async_show_form(step_id="init", data_schema=vol.Schema(base_schema))
 
     async def async_step_device_tracker(self, user_input=None):

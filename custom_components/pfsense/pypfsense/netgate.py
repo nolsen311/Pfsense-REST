@@ -64,6 +64,9 @@ REFRESH_MARGIN = 60
 # Responses several reads share within one poll are fetched once per window.
 SHARED_TTL = 5.0
 UPDATE_INFO_TTL = 3600.0
+# While an upgrade is running, re-read the update status this often so the
+# new version is noticed soon after the reboot.
+UPDATE_INFO_TTL_UPGRADING = 60.0
 
 
 class _SessionInvalid(PfSenseAuthError):
@@ -149,6 +152,7 @@ class NetgateClient:
         self._write_lock = asyncio.Lock()
         self._shared: dict[str, tuple[float, asyncio.Future]] = {}
         self._update_info: tuple[float, dict | None] | None = None
+        self._upgrade_from: str | None = None
 
     # ---------------------------------------------------------------- http
 
@@ -459,11 +463,38 @@ class NetgateClient:
         reads the result, so there is no point asking every poll.
         """
         now = time.monotonic()
-        if self._update_info and now - self._update_info[0] < UPDATE_INFO_TTL:
+        ttl = UPDATE_INFO_TTL_UPGRADING if self._upgrade_from else UPDATE_INFO_TTL
+        if self._update_info and now - self._update_info[0] < ttl:
             return self._update_info[1]
         info = netgate_map.firmware_update_info(await self._get("/system/update"))
         self._update_info = (now, info)
+        installed = ((info or {}).get("base") or {}).get("installed_version")
+        if self._upgrade_from and installed and installed != self._upgrade_from:
+            self._upgrade_from = None  # the upgrade landed
         return info
+
+    async def start_firmware_update(self) -> None:
+        """Start a base-system upgrade on the current firmware branch.
+
+        LIVE-CHECK (unverified on hardware): ``POST /system/update
+        {"firmware_branch": ...}`` is taken from the spec. The box reboots
+        during the upgrade, so a dropped connection counts as started. Until
+        the installed version changes, the update status is re-read every
+        minute instead of hourly.
+        """
+        body = await self._get("/system/update") or {}
+        info = netgate_map.firmware_update_info(body)
+        installed = ((info or {}).get("base") or {}).get("installed_version")
+        branch = body.get("firmware_branch") or installed
+        if not branch:
+            raise PfSenseAPIError("cannot determine the firmware branch to upgrade")
+        async with self._write_lock:
+            with contextlib.suppress(PfSenseConnectionError):
+                await self._request(
+                    "POST", "/system/update", payload={"firmware_branch": branch}
+                )
+        self._upgrade_from = installed
+        self._update_info = None
 
     async def get_dns_servers(self) -> list[str]:
         """System DNS servers from ``/system/setup``."""

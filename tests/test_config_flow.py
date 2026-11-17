@@ -423,3 +423,23 @@ async def test_adding_same_firewall_twice_aborts(hass: HomeAssistant):
         )
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "already_configured"
+
+
+@pytest.mark.asyncio
+async def test_firmware_install_option_only_for_netgate(hass: HomeAssistant):
+    """The unverified-install opt-in is offered on Netgate entries only."""
+    pfrest = _pfrest_entry(hass)
+    result = await hass.config_entries.options.async_init(pfrest.entry_id)
+    assert "firmware_install_unverified" not in {
+        str(k) for k in result["data_schema"].schema
+    }
+    netgate = MockConfigEntry(
+        domain=DOMAIN,
+        version=5,
+        unique_id="other",
+        data={CONF_URL: "https://10.0.0.2:8443", CONF_BACKEND: BACKEND_NETGATE},
+    )
+    netgate.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(netgate.entry_id)
+    keys = {str(k): k for k in result["data_schema"].schema}
+    assert keys["firmware_install_unverified"].default() is False

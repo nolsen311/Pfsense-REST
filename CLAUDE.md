@@ -272,9 +272,29 @@ Verified against the live 26.07 box:
   `firmware_update_info.base` (`installed_version`/`version`). The client
   caches the result for 1 h, and it reads about 1 s even with `refresh=true`.
   `/system/firmware` is the **board** firmware (coreboot), not pfSense.
-  Install is not offered: `POST /system/update` and `/system/update/progress`
-  exist but aren't tested. pfrest still returns `None`, so the entity is
-  unavailable there.
+  pfrest still returns `None`, so the entity is unavailable there.
+- **Firmware install (opt-in, UNVERIFIED):**
+  - Netgate entries get an Install button only when the option
+    `firmware_install_unverified` (`CONF_FIRMWARE_INSTALL_UNVERIFIED`,
+    default off) is on. While it's on, the entity's `release_summary`
+    warns that the path is unverified.
+  - `start_firmware_update()` sends `POST /system/update {"firmware_branch":
+    <current branch>}`, taken from the spec. A dropped connection counts as
+    started. The client then re-reads `/system/update` every 60 s instead
+    of hourly, until the installed version changes.
+  - The entity declares `INSTALL | PROGRESS` and stays `in_progress` until
+    the installed version changes, or for at most 2 h. Without `PROGRESS`, HA
+    ignores the entity's `in_progress` and shows "installing" only while
+    `async_install` runs.
+  - pfrest raises `PfSenseUnsupportedError`. `/system/update/progress`
+    (`messages`, `completed`, timestamps) is unused because `completed`'s
+    meaning is unknown: it reads 0 after a finished check.
+  - **To remove the gate once a real upgrade is verified:**
+    1. Drop the option (const, options-flow field, strings).
+    2. Make `_install_allowed` mean "backend is Netgate".
+    3. Delete `UNVERIFIED_SUMMARY` and the `release_summary` override.
+    4. Remove the LIVE-CHECK note on `start_firmware_update`.
+    5. Update the tests that assert opt-in.
 - **Reconfigure** (`async_step_reconfigure`, a menu of
   `reconfigure_<auth method>` steps):
   - It switches an entry between backends, auth methods, URLs or
