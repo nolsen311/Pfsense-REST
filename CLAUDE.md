@@ -381,6 +381,44 @@ current state of the repo — read it before touching tooling, tests or a releas
   2021). Nothing icon-related lives in this repo; a 0-byte `brand/icon.png` stub
   is dead weight. Changing the domain would forfeit the inherited icon.
 
+### Authentication
+
+Ported from the unmerged `claude-md-auth` branch (2026-09, `v0.10.2`) and
+updated to the current code.
+
+The entry records its backend in `backend` and its method in `auth_method`.
+The Netgate API (`auth_method: netgate`) logs in with a username and password;
+see "Netgate API backend" above. The REST API package has three methods,
+which are mutually exclusive on the box:
+
+- **`PfRestClient(url, session, *, auth_method, api_key | username/password,
+  verify_ssl)`** in `pypfsense/pfrest.py`:
+  - `api_key` sends the `x-api-key` header.
+  - `basic` sends `Authorization: Basic`, built by hand (not the deprecated
+    `aiohttp.BasicAuth`).
+  - `jwt` sends a Bearer token minted from `POST /api/v2/auth/jwt`
+    (authenticated with Basic; the response is `{"data": {"token": ...}}`,
+    and the TTL is `RESTAPISettings.jwt_exp`, 3600 s by default). The token
+    is cached. On a `401` it's cleared and re-minted, and the call is retried
+    once (`_retried` guard). Minting itself never retries.
+- **`client_from_config(url, session, data, verify_ssl)`** in
+  `pypfsense/__init__.py` builds the right client from config-entry data
+  (`backend`, then `auth_method`). Both `async_setup_entry` and
+  `config_flow.py` use it, and it's the patch target in tests
+  (`custom_components.pfsense.client_from_config` /
+  `...config_flow.client_from_config`).
+- **The box must have the method enabled** at System › REST API › Settings
+  (`auth_methods`, default `["BasicAuth"]`). The `invalid_auth` string says so.
+- **Config entry VERSION 5.** The migration chain:
+  - v1→v2 folds `tls_insecure` into `verify_ssl`.
+  - v2→v3 strips the XML-RPC username and password and forces reauth. The
+    stored password is *not* revived as Basic auth.
+  - v3→v4 stamps `auth_method: api_key`.
+  - v4→v5 stamps `backend: pfrest`.
+  - The unique id stays `slugify(<netgate_id>)` throughout.
+- `reauth_confirm` asks again for whatever the entry's method needs.
+  Reconfigure can switch method or backend (see "Netgate API backend").
+
 ### Lint / format
 
 - `pyproject.toml` `[tool.ruff]` is the **Home Assistant core selection,
@@ -428,6 +466,10 @@ current state of the repo — read it before touching tooling, tests or a releas
 4. `.github/workflows/release-drafter.yml` drafts notes from PR labels
    (config: `.github/release-drafter.yml`); its suggested version is a plain
    patch bump off the last tag — override the tag when it's wrong.
+- A pre-release must use a plain `vX.Y.Z` tag: a `-rc` or `-beta` suffix
+  fails release.yml's tag == manifest check. `release: published` fires for
+  pre-releases too, and HACS offers them only to users with "Show beta
+  versions" on.
 - Version must only ever increase (HACS treats a lower manifest/tag as a
   downgrade and shows no update — see the HACS aside above).
 - Released so far: `v0.9.0`, `v0.9.1`, `v0.9.3` (skipped `v0.9.2`), `v0.10.0`,
