@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Required so the bot can push changes back
           fetch-depth: 0
@@ -21,7 +21,7 @@ jobs:
           # so git-auto-commit can commit the ruff fixes onto it.
           ref: ${{ github.head_ref || github.ref_name }}
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
