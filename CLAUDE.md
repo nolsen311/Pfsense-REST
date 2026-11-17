@@ -205,7 +205,12 @@ Verified against the live 26.07 box:
       pfrest.
     - The `memory` dataset returns zeros. `/mim/device/identity` `devinfo`
       usage figures are stale or zero, so don't use them.
-    - No source for load average or disk usage (sensors unavailable).
+    - **Load average** comes from `GET /controller/stats` `cpu_load`: the
+      last 60 one-minute load values times 100, oldest first. The newest is
+      the 1-minute value. 5 and 15 minutes are EWMAs of the samples, the
+      kernel's decay, and come within ~0.03 of `sysctl vm.loadavg` on the
+      box (a plain mean was further off). `storage` there is empty.
+    - No source for disk usage (sensor unavailable).
   - **Gateways:** status `Online` → lower-cased. delay/loss are strings with
     units (`"14.995ms"`, `"0.0%"`) → parsed. No `srcip`/`substatus` (keys kept,
     so the attributes don't KeyError).
@@ -261,6 +266,29 @@ Verified against the live 26.07 box:
   - **Rule state kill:** Nexus rule `source`/`destination` are
     `{address, network, any, not, alias_id, port, label}`. Interface macros
     are in `network` and skipped; hosts and alias host targets are killed.
+- **Firmware update entity:** `GET /system/update` gives
+  `curr_base_system`/`latest_base_system` (`"26.07"`), `status_message`,
+  `update_check_error`, `firmware_branch` and `boot_env`. These map to
+  `firmware_update_info.base` (`installed_version`/`version`). The client
+  caches the result for 1 h, and it reads about 1 s even with `refresh=true`.
+  `/system/firmware` is the **board** firmware (coreboot), not pfSense.
+  Install is not offered: `POST /system/update` and `/system/update/progress`
+  exist but aren't tested. pfrest still returns `None`, so the entity is
+  unavailable there.
+- **Reconfigure** (`async_step_reconfigure`, a menu of
+  `reconfigure_<auth method>` steps):
+  - It switches an entry between backends, auth methods, URLs or
+    credentials in place.
+  - The device id must match (`wrong_device` otherwise), so entity unique ids
+    and history survive.
+  - The entry data is **replaced**, so the old method's secrets are dropped.
+  - When switching to Netgate, the form keeps the host and pre-fills port
+    8443. It never pre-fills secrets.
+  - The `pfrest_eol` repair points users here, and it clears itself after
+    the reload (it is only raised for pfrest entries).
+- The config flow's catch-all `except Exception` used to swallow HA's
+  `AbortFlow`, so adding a firewall twice showed "unknown error" instead of
+  `already_configured`. `AbortFlow` is now re-raised.
 - `_get_shared()` dedupes concurrent GETs of one path for 5 s.
   `/system/status` feeds several methods.
 - Config flow: menu option `netgate` (`auth_method: netgate`,

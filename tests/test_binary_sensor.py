@@ -50,6 +50,7 @@ def mock_pfsense_client():
     client.get_filter_rules.return_value = []
     client.get_nat_port_forward_rules.return_value = []
     client.get_nat_outbound_rules.return_value = []
+    client.get_firmware_update_info.return_value = None
     return client
 
 

@@ -375,6 +375,7 @@ _POLL_READS = (
     ("firewall_rules", "firewall_rules", "get_filter_rules", []),
     ("nat", "nat_port_forward_rules", "get_nat_port_forward_rules", []),
     ("nat", "nat_outbound_rules", "get_nat_outbound_rules", []),
+    ("firmware", "firmware_update_info", "get_firmware_update_info", None),
 )
 # Without these the device cannot be identified, so their failure fails the
 # whole poll (and the coordinator falls back to the cache).
@@ -421,7 +422,6 @@ class PfSenseData:
         self._hass = hass
         self._health = health or HealthTracker()
         self._state = {}
-        self._firmware_update_info = None
 
     @property
     def state(self):
@@ -470,7 +470,6 @@ class PfSenseData:
             for check, err in check_errors.items():
                 self._health.record_check(check, err)
 
-            new_state["firmware_update_info"] = None
             new_state["dhcp_stats"] = {}
 
             lease_stats = {"total": 0, "online": 0, "idle_offline": 0}

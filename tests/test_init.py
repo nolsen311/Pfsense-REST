@@ -55,6 +55,7 @@ def _full_client_mock():
     client.get_filter_rules.return_value = []
     client.get_nat_port_forward_rules.return_value = []
     client.get_nat_outbound_rules.return_value = []
+    client.get_firmware_update_info.return_value = None
     client.get_arp_table.return_value = []
     return client
 
@@ -193,3 +194,49 @@ async def test_migrate_v4_stamps_backend(hass: HomeAssistant):
 
     assert entry.version == 5
     assert entry.data == {**data, "backend": "pfrest"}
+
+
+@pytest.mark.asyncio
+async def test_update_entity_shows_base_versions(hass: HomeAssistant):
+    """When the backend reports versions, the update entity shows them."""
+    client = _full_client_mock()
+    client.get_firmware_update_info.return_value = {
+        "base": {
+            "installed_version": "26.07",
+            "version": "26.10",
+            "status_message": "Update available.",
+        }
+    }
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=5,
+        title="router.local",
+        unique_id="abc",
+        data={
+            CONF_URL: "https://192.168.1.1:8443",
+            "backend": "netgate",
+            "auth_method": "netgate",
+            "username": "u",
+            "password": "p",
+            CONF_VERIFY_SSL: False,
+        },
+        options={"device_tracker_enabled": False},
+    )
+    entry.add_to_hass(hass)
+    with (
+        patch("custom_components.pfsense.client_from_config", return_value=client),
+        patch("custom_components.pfsense.async_load_cache", return_value=None),
+        patch("custom_components.pfsense.async_save_cache"),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    state = hass.states.get("update.router_local_firmware_updates_available")
+    assert state is not None
+    assert state.state == "on"
+    assert state.attributes["installed_version"] == "26.07"
+    assert state.attributes["latest_version"] == "26.10"
+    assert state.attributes["pfsense_base_status_message"] == "Update available."
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
