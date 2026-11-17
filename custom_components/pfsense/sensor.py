@@ -63,6 +63,7 @@ async def async_setup_entry(  # noqa: C901 - flat per-telemetry-type entity buil
                 "telemetry.system.temp",
                 "dhcp_stats.leases.online",
                 "telemetry.wan_ip",
+                "ntp.offset_ms",
             ]
 
             entity = PfSenseStaticKeySensor(
@@ -354,6 +355,16 @@ class PfSenseStaticKeySensor(PfSenseSensor):
         """Return diagnostic attributes for top-tier system insights."""
         state = self.coordinator.data
         attrs = {}
+
+        if self.entity_description.key == "ntp.offset_ms":
+            peer = dict_get(state, "ntp.peer") or {}
+            attrs.update(
+                peer_server=peer.get("server"),
+                peer_refid=peer.get("refid"),
+                peer_reach=peer.get("reach"),
+                delay_ms=peer.get("delay_ms"),
+                jitter_ms=peer.get("jitter_ms"),
+            )
 
         if self.entity_description.key == "telemetry.wan_ip":
             attrs["dns_servers"] = dict_get(state, "dns_servers", [])

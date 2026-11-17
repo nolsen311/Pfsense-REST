@@ -80,6 +80,14 @@ def _client():
     client.get_nat_outbound_rules.return_value = []
     client.get_firmware_update_info.return_value = None
     client.get_installed_packages.return_value = []
+    client.get_ntp_status.return_value = {
+        "enabled": True,
+        "synchronized": True,
+        "peer": None,
+        "offset_ms": 1.0,
+        "stratum": 2,
+        "peers": [],
+    }
     client.get_notices.return_value = {"count": 0, "latest": []}
     return client
 

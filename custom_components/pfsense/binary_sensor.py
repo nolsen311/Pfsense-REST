@@ -52,6 +52,16 @@ async def async_setup_entry(
                 ),
                 True,
             ),
+            PfSenseNtpSyncBinarySensor(
+                config_entry,
+                coordinator,
+                BinarySensorEntityDescription(
+                    key="ntp.synchronized",
+                    name="NTP Synchronized",
+                    icon="mdi:clock-check-outline",
+                ),
+                True,
+            ),
             PfSenseApiConnectedBinarySensor(
                 config_entry,
                 coordinator,
@@ -145,4 +155,37 @@ class PfSensePendingNoticesBinarySensor(PfSenseBinarySensor):
         return {
             "pending_count": notices.get("count", 0),
             "latest_notices": notices.get("latest", []),
+        }
+
+
+class PfSenseNtpSyncBinarySensor(PfSenseBinarySensor):
+    """On while ntpd has selected a peer to sync to."""
+
+    @property
+    def _ntp(self) -> dict | None:
+        ntp = (self.coordinator.data or {}).get("ntp")
+        return ntp if isinstance(ntp, dict) else None
+
+    @property
+    def available(self):
+        """Unavailable when the backend has no NTP status."""
+        return self._ntp is not None and super().available
+
+    @property
+    def is_on(self):
+        """Return true while a peer is selected."""
+        return bool((self._ntp or {}).get("synchronized"))
+
+    @property
+    def extra_state_attributes(self):
+        """Service state and every peer's status."""
+        ntp = self._ntp or {}
+        peer = ntp.get("peer") or {}
+        return {
+            "service_enabled": ntp.get("enabled"),
+            "peer": peer.get("server"),
+            "peers": [
+                {k: p.get(k) for k in ("server", "status", "stratum", "offset_ms")}
+                for p in ntp.get("peers") or []
+            ],
         }

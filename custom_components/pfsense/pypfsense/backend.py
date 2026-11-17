@@ -51,6 +51,9 @@ class PfSenseBackend(Protocol):
     async def get_dns_servers(self) -> list[str]:
         """Return the configured system DNS servers."""
 
+    async def get_ntp_status(self) -> dict:
+        """Return ``{"enabled", "synchronized", "peer", "offset_ms", "stratum", "peers"}``."""
+
     async def get_notices(self) -> dict:
         """Return pending pfSense notices: ``{"count", "latest": [...]}``."""
 

@@ -546,6 +546,10 @@ class NetgateClient:
         self._package_upgrading[name] = pkg["installed_version"]
         self._packages = None
 
+    async def get_ntp_status(self) -> dict:
+        """NTP sync state, selected peer, offset and stratum."""
+        return netgate_map.ntp_status(await self._get("/services/ntp/status"))
+
     async def get_notices(self) -> dict:
         """Pending pfSense notices: ``{"count", "latest": [...]}`` (newest 3).
 

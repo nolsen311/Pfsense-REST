@@ -140,6 +140,9 @@ want in the entity settings.
   15-minute load averages are worked out from per-minute samples. Disk usage
   has no Netgate API source.
 - **DHCP:** total leases, online leases, idle/offline leases.
+- **NTP** (Netgate API): **NTP Synchronized** (binary sensor: on while ntpd
+  has selected a peer), **NTP Offset** (ms, with the selected peer's address,
+  delay and jitter as attributes) and **NTP Stratum** (disabled by default).
 - **Per interface:** link status, in/out byte and packet counters (passed
   traffic) plus their kB/s and packets/s rates, interface errors, collisions.
 - **Per gateway:** status, RTT delay, jitter (stddev), packet loss %.

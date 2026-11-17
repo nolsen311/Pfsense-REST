@@ -580,3 +580,53 @@ def test_installed_packages() -> None:
     }
     assert (acme["latest_version"], acme["update_available"]) == ("1.3.2", False)
     assert nm.installed_packages(None) == []
+
+
+def test_ntp_status():
+    """The selected peer gives offset/stratum; the pool placeholder is skipped."""
+    body = {
+        "enabled": True,
+        "servers": [
+            {
+                "status": "Pool Placeholder",
+                "server": "2.pfsense.pool.ntp.org",
+                "refid": ".POOL.",
+                "stratum": "16",
+            },
+            {
+                "status": "Candidate",
+                "server": "192.0.2.10",
+                "refid": "x",
+                "stratum": "2",
+                "offset": "+0.838",
+            },
+            {
+                "status": "Active Peer",
+                "server": "192.0.2.20",
+                "refid": "17.253.4.37",
+                "stratum": "2",
+                "offset": "+3.704",
+                "delay": "29.716",
+                "jitter": "1.009",
+                "reach": "377",
+            },
+        ],
+    }
+    ntp = nm.ntp_status(body)
+    assert ntp["synchronized"] is True
+    assert (ntp["offset_ms"], ntp["stratum"]) == (3.704, 2)
+    assert ntp["peer"]["server"] == "192.0.2.20"
+    assert ntp["peer"]["delay_ms"] == 29.716
+    assert [p["server"] for p in ntp["peers"]] == ["192.0.2.10", "192.0.2.20"]
+
+    unsynced = nm.ntp_status({"enabled": True, "servers": body["servers"][:2]})
+    assert unsynced["synchronized"] is False
+    assert unsynced["offset_ms"] is None and unsynced["peer"] is None
+    assert nm.ntp_status(None) == {
+        "enabled": False,
+        "synchronized": False,
+        "peer": None,
+        "offset_ms": None,
+        "stratum": None,
+        "peers": [],
+    }

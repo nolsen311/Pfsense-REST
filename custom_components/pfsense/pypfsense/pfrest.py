@@ -280,6 +280,12 @@ class PfRestClient:
             "package install is not supported by the REST API package backend"
         )
 
+    async def get_ntp_status(self) -> dict:
+        """Not implemented for the REST API package backend."""
+        raise PfSenseUnsupportedError(
+            "NTP status is only available on the Netgate API backend"
+        )
+
     async def get_notices(self) -> dict:
         """Pending pfSense notices: ``{"count", "latest": [...]}`` (newest 3).
 

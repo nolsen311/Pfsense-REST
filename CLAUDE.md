@@ -305,6 +305,17 @@ Verified against the live 26.07 box:
     no privilege repair.
   - The sensor keeps the pre-v3 key `notices.pending_notices_present`.
   - Verified on both backends on 2026-11-17 (read-only).
+- **NTP** (Netgate only):
+  - `GET /services/ntp/status` gives `{enabled, query_enabled, servers}`.
+    Each server is ntpq's peer line **as strings** (`offset "+3.704"` in ms,
+    `stratum "2"`), with pfSense's tally label in `status`.
+  - "Active Peer" or "PPS Peer" means selected. The others are
+    Candidate/Outlier/False Ticker/Excess/Backup/Unreach.
+  - The `.POOL.` placeholder row (stratum 16) is dropped.
+  - `netgate_map.ntp_status` returns synchronized, the selected peer, and
+    offset/stratum (`None` when nothing is selected).
+  - pfrest: unsupported, so the sync sensor is unavailable.
+  - Verified live (read-only) on 2026-11-17: stratum 2, +3.704 ms.
 - **Firmware install (opt-in, UNVERIFIED):**
   - Netgate entries get an Install button only when the option
     `firmware_install_unverified` (`CONF_FIRMWARE_INSTALL_UNVERIFIED`,

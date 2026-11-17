@@ -370,3 +370,16 @@ async def test_notices_errors_become_unsupported() -> None:
             await client.get_notices()
         client.exec_command = AsyncMock(return_value='{"count": 3, "latest": []}')
         assert (await client.get_notices())["count"] == 3
+
+
+async def test_pfrest_ntp_is_unsupported() -> None:
+    """Pfrest reports NTP status as unsupported."""
+    from custom_components.pfsense.pypfsense import (  # noqa: PLC0415
+        PfRestClient,
+        PfSenseUnsupportedError,
+    )
+
+    with pytest.raises(PfSenseUnsupportedError):
+        await PfRestClient(
+            "https://pf.example:8444", object(), api_key="k"
+        ).get_ntp_status()
