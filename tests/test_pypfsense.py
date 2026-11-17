@@ -325,3 +325,77 @@ async def test_pfrest_packages_are_unsupported() -> None:
         await client.get_installed_packages()
     with pytest.raises(PfSenseUnsupportedError):
         await client.install_package_update("acme")
+
+
+_PFCTL_SI = """Status: Enabled for 83 days 08:14:58           Debug: Urgent
+
+State Table                          Total             Rate
+  current entries                     2126
+  searches                     17661891614         2452.7/s
+Source Tracking Table
+  current entries                        9
+"""
+_PFCTL_SM = "states        hard limit   805000\nsrc-nodes     hard limit   805000\n"
+
+
+def test_parse_pf_states() -> None:
+    """The state table's count (not source tracking's) and the hard limit."""
+    from custom_components.pfsense.pypfsense.util import (  # noqa: PLC0415
+        parse_pf_states,
+    )
+
+    assert parse_pf_states(_PFCTL_SI, _PFCTL_SM) == {
+        "current": 2126,
+        "limit": 805000,
+        "used_percent": 0.26,
+    }
+    # pfrest's grep'd command output: both lines in one string.
+    grep_out = "  current entries   1950  \nstates        hard limit   805000\n"
+    assert parse_pf_states(grep_out)["limit"] == 805000
+    assert parse_pf_states("  current entries 5\n") == {
+        "current": 5,
+        "limit": None,
+        "used_percent": None,
+    }
+    with pytest.raises(ValueError):
+        parse_pf_states("pfctl: permission denied")
+
+
+async def test_state_table_on_both_backends() -> None:
+    """Netgate decodes pfinfo and adds dataset extras; pfrest shells pfctl."""
+    import base64  # noqa: PLC0415
+    from unittest.mock import AsyncMock  # noqa: PLC0415
+
+    from custom_components.pfsense.pypfsense import (  # noqa: PLC0415
+        NetgateClient,
+        PfRestClient,
+        PfSensePrivilegeError,
+        PfSenseUnsupportedError,
+    )
+
+    netgate = NetgateClient(
+        "https://pf.example:8443", object(), username="u", password="p"
+    )
+    b64 = lambda t: base64.b64encode(t.encode()).decode()  # noqa: E731
+    netgate._get = AsyncMock(
+        return_value={"pfinfo": {"info": b64(_PFCTL_SI), "memory": b64(_PFCTL_SM)}}
+    )
+    netgate._monitoring = AsyncMock(
+        return_value={"pfstates": 1561.0, "pfnat": 373.6, "srcip": 8.0, "dstip": 200.5}
+    )
+    table = await netgate.get_state_table()
+    assert (table["current"], table["limit"]) == (2126, 805000)
+    assert (table["nat_states"], table["source_ips"], table["destination_ips"]) == (
+        373.6,
+        8.0,
+        200.5,
+    )
+
+    pfrest = PfRestClient("https://pf.example:8444", object(), api_key="k")
+    pfrest.exec_command = AsyncMock(
+        return_value="  current entries 1950\nstates        hard limit   805000\n"
+    )
+    assert (await pfrest.get_state_table())["current"] == 1950
+    pfrest.exec_command = AsyncMock(side_effect=PfSensePrivilegeError("403"))
+    with pytest.raises(PfSenseUnsupportedError):
+        await pfrest.get_state_table()

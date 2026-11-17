@@ -292,6 +292,19 @@ Verified against the live 26.07 box:
     failure).
   - Don't use the Nexus package for testing: upgrading it restarts the API
     itself.
+- **State table** (both backends):
+  - `get_state_table()` returns `{current, limit, used_percent}` from
+    `pfctl -si` / `-sm` text (`util.parse_pf_states`; the State Table's
+    "current entries", not Source Tracking's).
+  - Netgate reads it from `GET /diag/pfinfo`, whose fields are
+    **base64-encoded** text (~1.7 s, no shell needed). The `system/states`
+    monitoring dataset adds `nat_states`, `source_ips` and
+    `destination_ips`, which are 60 s averages. Its `pfstates` is an average
+    too, so it isn't used for the count.
+  - pfrest greps `pfctl` through `command_prompt` (~0.3 s). A missing
+    privilege reports unsupported.
+  - Verified live on both backends on 2026-11-17: ~1,950 states, a limit of
+    805,000.
 - **Firmware install (opt-in, UNVERIFIED):**
   - Netgate entries get an Install button only when the option
     `firmware_install_unverified` (`CONF_FIRMWARE_INSTALL_UNVERIFIED`,

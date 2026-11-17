@@ -73,3 +73,33 @@ def _flatten_params(params: dict | None) -> dict | None:
     if not params:
         return None
     return {k: str(v) for k, v in params.items() if v is not None}
+
+
+# ``pfctl -si`` / ``-sm`` text (Netgate's /diag/pfinfo returns the same text,
+# base64-encoded). The state table is the first "current entries" line.
+PF_STATES_COMMAND = (
+    "/sbin/pfctl -si | grep -m1 'current entries'; /sbin/pfctl -sm | grep '^states'"
+)
+_PF_CURRENT = re.compile(r"current entries\s+(\d+)")
+_PF_LIMIT = re.compile(r"^states\s+hard limit\s+(\d+)", re.MULTILINE)
+
+
+def parse_pf_states(info: str, memory: str = "") -> dict:
+    """State-table size and limit from ``pfctl`` text.
+
+    Returns ``{"current", "limit", "used_percent"}``; raises ``ValueError``
+    when no current-entries count is found.
+    """
+    text = info or ""
+    section = text.find("State Table")
+    current = _PF_CURRENT.search(text, max(section, 0))
+    if current is None:
+        raise ValueError("no state table count in pfctl output")
+    limit = _PF_LIMIT.search(f"{memory}\n{text}")
+    count = int(current.group(1))
+    cap = int(limit.group(1)) if limit else None
+    return {
+        "current": count,
+        "limit": cap,
+        "used_percent": round(count / cap * 100, 2) if cap else None,
+    }

@@ -51,6 +51,9 @@ class PfSenseBackend(Protocol):
     async def get_dns_servers(self) -> list[str]:
         """Return the configured system DNS servers."""
 
+    async def get_state_table(self) -> dict:
+        """Return ``{"current", "limit", "used_percent", ...}`` for pf states."""
+
     # telemetry
     async def get_telemetry(self) -> dict:
         """Return the nested legacy ``telemetry`` dict the sensors read."""
