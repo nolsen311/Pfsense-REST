@@ -7,9 +7,9 @@
         "description": "Choose the API Home Assistant should use. **Netgate API** is pfSense's built-in API (the Nexus controller, standard from 26.10). The other options use the community REST API package, which stops working when Netgate removes PHP from pfSense.",
         "menu_options": {
           "netgate": "Netgate API (recommended for 26.07 and newer)",
-          "api_key": "REST API package — aPI key",
+          "api_key": "REST API package — API key",
           "basic": "REST API package — username and password",
-          "jwt": "REST API package — jWT (from username and password)"
+          "jwt": "REST API package — JWT (from username and password)"
         }
       },
       "netgate": {
@@ -63,6 +63,55 @@
           "username": "Username",
           "password": "Password"
         }
+      },
+      "reconfigure": {
+        "title": "Change how Home Assistant connects",
+        "description": "Choose the API to use from now on. The firewall must stay the same: entities, history and automations are kept. To move off the community REST API package, choose **Netgate API**.",
+        "menu_options": {
+          "reconfigure_netgate": "Netgate API (recommended for 26.07 and newer)",
+          "reconfigure_api_key": "REST API package — API key",
+          "reconfigure_basic": "REST API package — username and password",
+          "reconfigure_jwt": "REST API package — JWT (from username and password)"
+        }
+      },
+      "reconfigure_netgate": {
+        "title": "Netgate API (Nexus)",
+        "description": "Enter the firewall's Netgate API address, including the port (usually 8443, e.g. {example_url}), and a pfSense user's credentials. The user must be in the `admins` group or in the Nexus `mim_…` groups for the features you use.\n\nThe API port is **not** covered by pfSense's anti-lockout rule: if Home Assistant cannot connect, add a LAN pass rule from the Home Assistant host to that port.\n\nThe credentials are checked before anything changes. On success the entry is reloaded with the new connection.",
+        "data": {
+          "url": "URL",
+          "username": "Username",
+          "password": "Password",
+          "verify_ssl": "Verify SSL certificate"
+        }
+      },
+      "reconfigure_api_key": {
+        "title": "pfSense REST API — API key",
+        "description": "Enter the base URL of the pfSense REST API (including the port, e.g. {example_url}) and an API key generated at System › REST API › Keys.\n\nThe credentials are checked before anything changes. On success the entry is reloaded with the new connection.",
+        "data": {
+          "url": "URL",
+          "api_key": "API key",
+          "verify_ssl": "Verify SSL certificate"
+        }
+      },
+      "reconfigure_basic": {
+        "title": "pfSense REST API — username and password",
+        "description": "Enter the base URL of the pfSense REST API (including the port, e.g. {example_url}) and a pfSense local user's credentials. HTTP Basic authentication must be enabled at System › REST API › Settings.\n\nThe credentials are checked before anything changes. On success the entry is reloaded with the new connection.",
+        "data": {
+          "url": "URL",
+          "username": "Username",
+          "password": "Password",
+          "verify_ssl": "Verify SSL certificate"
+        }
+      },
+      "reconfigure_jwt": {
+        "title": "pfSense REST API — JWT",
+        "description": "Enter the base URL of the pfSense REST API (including the port, e.g. {example_url}) and a pfSense local user's credentials. Home Assistant obtains and refreshes a JWT from them. JWT authentication must be enabled at System › REST API › Settings.\n\nThe credentials are checked before anything changes. On success the entry is reloaded with the new connection.",
+        "data": {
+          "url": "URL",
+          "username": "Username",
+          "password": "Password",
+          "verify_ssl": "Verify SSL certificate"
+        }
       }
     },
     "error": {
@@ -77,7 +126,8 @@
     "abort": {
       "already_configured": "Device is already configured",
       "reauth_successful": "Re-authentication was successful",
-      "wrong_device": "The credentials belong to a different pfSense device"
+      "wrong_device": "That URL and those credentials reach a different pfSense device. Reconfigure must keep the same firewall; add a new entry for a different one.",
+      "reconfigure_successful": "The connection was updated"
     }
   },
   "options": {
@@ -122,7 +172,7 @@
     },
     "pfrest_eol": {
       "title": "{name}: the REST API package is end-of-life",
-      "description": "This connection uses the community REST API package, which stops working once Netgate removes PHP from pfSense. This firewall is already running Netgate's built-in API (the Nexus controller), which is the supported replacement.\n\nNothing is broken yet. Support for the Netgate API is being added to this integration; follow {migration_url} for when you can switch."
+      "description": "This connection uses the community REST API package, which stops working once Netgate removes PHP from pfSense. This firewall is already running Netgate's built-in API (the Nexus controller), which is the supported replacement.\n\nNothing is broken yet. To switch, open this integration's entry, choose **Reconfigure**, then **Netgate API**. Your entities are kept. Details: {migration_url}"
     }
   }
 }

@@ -487,6 +487,7 @@ async def test_telemetry_survives_missing_optional_parts(client) -> None:
         m.get(f"{API}/system/gateways/status", payload=GATEWAYS)
         m.get(f"{API}/system/gateways", status=403, payload={"errmsg": "forbidden"})
         m.get(f"{API}/vpn/openvpn/status", status=500, payload={"errmsg": "x"})
+        m.get(f"{API}/controller/stats", status=403, payload={"errmsg": "forbidden"})
         m.post(
             f"{API}/system/monitoring",
             payload={"dataseries": ["user"], "data": ["5,"]},
@@ -498,3 +499,47 @@ async def test_telemetry_survives_missing_optional_parts(client) -> None:
     assert t["gateways_detail"] == {}
     assert t["openvpn"] == {"servers": {}}
     assert t["cpu"]["used_percent"] == 5.0
+    assert t["system"]["load_average"]["one_minute"] is None
+
+
+def test_firmware_update_info() -> None:
+    """``/system/update`` maps to the base shape the update entity reads."""
+    body = {
+        "firmware_branch": "26.07",
+        "boot_env": "default_1",
+        "curr_base_system": "26.07",
+        "latest_base_system": "26.10",
+        "update_check_error": "",
+        "status_message": "Update available.",
+        "messages": ["noise"],
+    }
+    assert nm.firmware_update_info(body) == {
+        "base": {
+            "installed_version": "26.07",
+            "version": "26.10",
+            "status_message": "Update available.",
+            "check_error": None,
+            "firmware_branch": "26.07",
+            "boot_env": "default_1",
+        }
+    }
+    assert nm.firmware_update_info({"status_message": "x"}) is None
+    assert nm.firmware_update_info(None) is None
+
+
+def test_load_average_from_controller_stats() -> None:
+    """Newest sample is the 1-minute load; 5/15 are exponential averages."""
+    assert nm.load_average({"cpu_load": [100] * 60}) == {
+        "one_minute": 1.0,
+        "five_minute": 1.0,
+        "fifteen_minute": 1.0,
+    }
+    rising = nm.load_average({"cpu_load": [0] * 59 + [300]})
+    assert rising["one_minute"] == 3.0
+    assert 0 < rising["fifteen_minute"] < rising["five_minute"] < 3.0
+    assert nm.load_average({"cpu_load": []}) is None
+    assert nm.load_average(None) is None
+    t = nm.build_telemetry({}, {}, {}, {}, None, {}, {}, {}, rising)
+    assert t["system"]["load_average"] == rising
+    t = nm.build_telemetry({}, {}, {}, {}, None, {}, {}, {})
+    assert t["system"]["load_average"]["one_minute"] is None

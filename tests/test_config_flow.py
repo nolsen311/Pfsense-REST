@@ -277,3 +277,149 @@ async def test_form_netgate_invalid_auth(hass: HomeAssistant):
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == AUTH_METHOD_NETGATE
     assert result["errors"] == {"base": "invalid_auth"}
+
+
+def _pfrest_entry(hass) -> MockConfigEntry:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=5,
+        unique_id="mock_id_12345",
+        title="router.local",
+        data={
+            CONF_URL: "https://10.0.0.1:8444",
+            CONF_VERIFY_SSL: False,
+            CONF_BACKEND: BACKEND_PFREST,
+            CONF_AUTH_METHOD: AUTH_METHOD_API_KEY,
+            CONF_API_KEY: "old-key",
+        },
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
+async def _reconfigure_pick(hass, entry, step):
+    result = await entry.start_reconfigure_flow(hass)
+    assert result["type"] == FlowResultType.MENU
+    assert f"reconfigure_{AUTH_METHOD_NETGATE}" in result["menu_options"]
+    return await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": step}
+    )
+
+
+@pytest.mark.asyncio
+async def test_reconfigure_pfrest_to_netgate(hass: HomeAssistant):
+    """A pfrest entry moves to Netgate in place: same entry, new data, reload."""
+    entry = _pfrest_entry(hass)
+    form = await _reconfigure_pick(hass, entry, f"reconfigure_{AUTH_METHOD_NETGATE}")
+    assert form["type"] == FlowResultType.FORM
+    # Host kept, port switched to Netgate's; verify_ssl carried over.
+    schema = {str(k): k for k in form["data_schema"].schema}
+    assert schema[CONF_URL].default() == "https://10.0.0.1:8443"
+    assert schema[CONF_VERIFY_SSL].default() is False
+    assert "name" not in schema
+
+    with (
+        _patch_client(_client_mock()),
+        patch(
+            "homeassistant.config_entries.ConfigEntries.async_reload",
+            return_value=True,
+        ) as reload,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            form["flow_id"],
+            {
+                CONF_URL: "https://10.0.0.1:8443",
+                CONF_USERNAME: "ha",
+                CONF_PASSWORD: "pw",
+                CONF_VERIFY_SSL: False,
+            },
+        )
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data == {
+        CONF_URL: "https://10.0.0.1:8443",
+        CONF_VERIFY_SSL: False,
+        CONF_BACKEND: BACKEND_NETGATE,
+        CONF_AUTH_METHOD: AUTH_METHOD_NETGATE,
+        CONF_USERNAME: "ha",
+        CONF_PASSWORD: "pw",
+    }  # the old API key is gone
+    assert entry.unique_id == "mock_id_12345"
+    assert len(hass.config_entries.async_entries(DOMAIN)) == 1
+    reload.assert_called_once_with(entry.entry_id)
+
+
+@pytest.mark.asyncio
+async def test_reconfigure_rejects_a_different_firewall(hass: HomeAssistant):
+    """Reconfigure cannot repoint an entry at another device."""
+    entry = _pfrest_entry(hass)
+    form = await _reconfigure_pick(hass, entry, f"reconfigure_{AUTH_METHOD_NETGATE}")
+    other = _client_mock()
+    other.get_system_info.return_value = {
+        "hostname": "x",
+        "domain": "y",
+        "netgate_device_id": "someone_else",
+    }
+    with _patch_client(other):
+        result = await hass.config_entries.flow.async_configure(
+            form["flow_id"],
+            {CONF_URL: "https://10.0.0.9:8443", CONF_USERNAME: "a", CONF_PASSWORD: "b"},
+        )
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "wrong_device"
+    assert entry.data[CONF_API_KEY] == "old-key"
+
+
+@pytest.mark.asyncio
+async def test_reconfigure_bad_credentials_shows_error(hass: HomeAssistant):
+    """A failed check leaves the entry untouched and re-shows the form."""
+    entry = _pfrest_entry(hass)
+    form = await _reconfigure_pick(hass, entry, f"reconfigure_{AUTH_METHOD_NETGATE}")
+    client = _client_mock()
+    client.get_system_info.side_effect = PfSenseAuthError("nope")
+    with _patch_client(client):
+        result = await hass.config_entries.flow.async_configure(
+            form["flow_id"],
+            {CONF_URL: "https://10.0.0.1:8443", CONF_USERNAME: "a", CONF_PASSWORD: "b"},
+        )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == f"reconfigure_{AUTH_METHOD_NETGATE}"
+    assert result["errors"] == {"base": "invalid_auth"}
+    assert entry.data[CONF_BACKEND] == BACKEND_PFREST
+
+
+@pytest.mark.asyncio
+async def test_reconfigure_same_backend_keeps_url_and_username(hass: HomeAssistant):
+    """Staying on a backend pre-fills the current URL and username, no secrets."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=5,
+        unique_id="mock_id_12345",
+        data={
+            CONF_URL: "https://10.0.0.1:8443",
+            CONF_BACKEND: BACKEND_NETGATE,
+            CONF_AUTH_METHOD: AUTH_METHOD_NETGATE,
+            CONF_USERNAME: "ha",
+            CONF_PASSWORD: "secret",
+        },
+    )
+    entry.add_to_hass(hass)
+    form = await _reconfigure_pick(hass, entry, f"reconfigure_{AUTH_METHOD_NETGATE}")
+    schema = {str(k): k for k in form["data_schema"].schema}
+    assert schema[CONF_URL].default() == "https://10.0.0.1:8443"
+    assert schema[CONF_USERNAME].default() == "ha"
+    assert schema[CONF_PASSWORD].default() == ""
+
+
+@pytest.mark.asyncio
+async def test_adding_same_firewall_twice_aborts(hass: HomeAssistant):
+    """A second entry for one device aborts cleanly (not an 'unknown' error)."""
+    _pfrest_entry(hass)
+    form = await _menu_pick(hass, AUTH_METHOD_NETGATE)
+    with _patch_client(_client_mock()):
+        result = await hass.config_entries.flow.async_configure(
+            form["flow_id"],
+            {CONF_URL: "https://10.0.0.1:8443", CONF_USERNAME: "a", CONF_PASSWORD: "b"},
+        )
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "already_configured"

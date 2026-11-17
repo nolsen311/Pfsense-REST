@@ -205,7 +205,12 @@ Verified against the live 26.07 box:
       pfrest.
     - The `memory` dataset returns zeros. `/mim/device/identity` `devinfo`
       usage figures are stale or zero, so don't use them.
-    - No source for load average or disk usage (sensors unavailable).
+    - **Load average** comes from `GET /controller/stats` `cpu_load`: the
+      last 60 one-minute load values times 100, oldest first. The newest is
+      the 1-minute value. 5 and 15 minutes are EWMAs of the samples, the
+      kernel's decay, and come within ~0.03 of `sysctl vm.loadavg` on the
+      box (a plain mean was further off). `storage` there is empty.
+    - No source for disk usage (sensor unavailable).
   - **Gateways:** status `Online` → lower-cased. delay/loss are strings with
     units (`"14.995ms"`, `"0.0%"`) → parsed. No `srcip`/`substatus` (keys kept,
     so the attributes don't KeyError).
@@ -217,6 +222,73 @@ Verified against the live 26.07 box:
   - **Latency:** a full poll takes ~9 s (rules ~1.5 s per interface, NAT
     ~1.5 s each, `/system/status` ~2 s; the box partly serializes them).
     Keep the scan interval ≥ 30 s.
+- **Writes (phase 4)**, verified on the live box on 2026-11-17 with the
+  user's approval for each test:
+  - **Rule toggles:** `POST /firewall/rules/interface/{if}/toggle/{id}
+    {"value": true}` disables and `false` enables. The firewall reloads
+    straight away and nothing is left dirty. `POST /system/config/dirty
+    {"apply": true}` still runs after each write and is harmless when
+    nothing is pending. NAT toggles use the same body (from the spec, not
+    tested live).
+  - **Aliases:** entries are `targets: [{name: <address>, descr}]`. The
+    `address`/`detail` strings are always empty, and **are ignored on write**.
+    `PUT /aliases` creates, `POST /aliases/{id}` updates (`id` = list index,
+    a string), `DELETE /aliases/{id}` deletes. pf only loads an alias that a
+    rule references, so `pfctl -t <alias> -T show` fails for an unused one.
+  - **States:**
+    - `DELETE /diag/states` rejects `srcip` without `dstip` (400 "dstip not
+      specified").
+    - `filter_str` is a substring match.
+    - So `kill_states` lists the states with `GET /diag/states?filter_str=<ip>`
+      (entries carry bare `src`/`dst` IPs), keeps the exact matches and
+      deletes each `srcip`+`dstip` pair. That pair DELETE has not been run
+      against a real state yet.
+    - `reset_state_table` runs `pfctl -F states` through the shell, because
+      it's unclear what an unfiltered DELETE does.
+  - **Shell:** `POST /diag/cmd/shell {cmd: base64, timeout}`. The
+    `response` is **base64** too, and errors come back in-band as text.
+    Needs the shell privilege.
+  - **Service control and WOL:** Nexus has no endpoint for either, so both go
+    through the shell:
+    - `pfSsh.php playback svc <action> <name>` (verified: restarting ntpd
+      gave it a new PID);
+    - `/usr/local/bin/wol -i <broadcast> <mac>` (the broadcast address is
+      worked out from `/system/interfaces/status`).
+  - **ARP:** `DELETE /diag/arp/{ip}` returns success for an IP that isn't
+    in the table.
+  - **Default gateway:** the `/system/gateways` GET returns `{defaults:
+    {defaultgw4, defaultgw6}, gateways: [...]}` (no `id`), and the defaults
+    are gateway `name`s. The PUT `/system/gateways/{index}` with `defaults`
+    is from the spec. **LIVE-CHECK**: the box has one gateway, so the switch
+    itself can't be tested.
+  - **Reboot/halt:** `POST /diag/control {action: reboot|rebootfsck|halt}`,
+    from the spec and not run. A dropped connection counts as success.
+  - **Rule state kill:** Nexus rule `source`/`destination` are
+    `{address, network, any, not, alias_id, port, label}`. Interface macros
+    are in `network` and skipped; hosts and alias host targets are killed.
+- **Firmware update entity:** `GET /system/update` gives
+  `curr_base_system`/`latest_base_system` (`"26.07"`), `status_message`,
+  `update_check_error`, `firmware_branch` and `boot_env`. These map to
+  `firmware_update_info.base` (`installed_version`/`version`). The client
+  caches the result for 1 h, and it reads about 1 s even with `refresh=true`.
+  `/system/firmware` is the **board** firmware (coreboot), not pfSense.
+  Install is not offered: `POST /system/update` and `/system/update/progress`
+  exist but aren't tested. pfrest still returns `None`, so the entity is
+  unavailable there.
+- **Reconfigure** (`async_step_reconfigure`, a menu of
+  `reconfigure_<auth method>` steps):
+  - It switches an entry between backends, auth methods, URLs or
+    credentials in place.
+  - The device id must match (`wrong_device` otherwise), so entity unique ids
+    and history survive.
+  - The entry data is **replaced**, so the old method's secrets are dropped.
+  - When switching to Netgate, the form keeps the host and pre-fills port
+    8443. It never pre-fills secrets.
+  - The `pfrest_eol` repair points users here, and it clears itself after
+    the reload (it is only raised for pfrest entries).
+- The config flow's catch-all `except Exception` used to swallow HA's
+  `AbortFlow`, so adding a firewall twice showed "unknown error" instead of
+  `already_configured`. `AbortFlow` is now re-raised.
 - `_get_shared()` dedupes concurrent GETs of one path for 5 s.
   `/system/status` feeds several methods.
 - Config flow: menu option `netgate` (`auth_method: netgate`,

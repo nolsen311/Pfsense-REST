@@ -16,7 +16,6 @@ from custom_components.pfsense.pypfsense import (
     PfSenseConnectionError,
     PfSenseNotFoundError,
     PfSensePrivilegeError,
-    PfSenseUnsupportedError,
 )
 from custom_components.pfsense.pypfsense.netgate import (
     REFRESH_COOKIE,
@@ -330,15 +329,6 @@ async def test_failed_shared_read_is_not_cached(session) -> None:
         assert (await client._status())["ndi"] == "abc123def456"
 
 
-async def test_unimplemented_reads_are_unsupported(session) -> None:
-    """Writes not wired up yet raise the 'unsupported' error, with no I/O."""
-    client = _client(session)
-    with aioresponses() as m:
-        with pytest.raises(PfSenseUnsupportedError):
-            await client.system_halt()
-        assert not m.requests
-
-
 async def test_platform_falls_back_to_product(session) -> None:
     """Without vendor/model (e.g. a VM), the platform is the product name."""
     client = _client(session)
@@ -350,3 +340,17 @@ async def test_platform_falls_back_to_product(session) -> None:
     assert firmware["platform"] == "pfSense"
     assert (firmware["base"], firmware["patch"]) == ("26.07", "0")
     assert firmware["buildtime"] is None
+
+
+async def test_firmware_update_info_is_cached(session) -> None:
+    """The update status is fetched once per hour, not every poll."""
+    client = _client(session)
+    body = {"curr_base_system": "26.07", "latest_base_system": "26.07"}
+    with aioresponses() as m:
+        _login_ok(m, _jwt(time.time() + 300))
+        m.get(f"{API}/system/update", payload=body)
+        first = await client.get_firmware_update_info()
+        second = await client.get_firmware_update_info()
+        assert len(_calls(m, "GET", f"{API}/system/update")) == 1
+    assert first == second
+    assert first["base"]["installed_version"] == "26.07"

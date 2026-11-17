@@ -32,6 +32,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import contextlib
+import ipaddress
 import json
 import logging
 import time
@@ -47,8 +49,8 @@ from .errors import (
     PfSenseConnectionError,
     PfSenseNotFoundError,
     PfSensePrivilegeError,
-    PfSenseUnsupportedError,
 )
+from .util import _as_network, _expand_alias_networks, _shq
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -61,6 +63,7 @@ REFRESH_COOKIE = "pfsense-refresh-token"
 REFRESH_MARGIN = 60
 # Responses several reads share within one poll are fetched once per window.
 SHARED_TTL = 5.0
+UPDATE_INFO_TTL = 3600.0
 
 
 class _SessionInvalid(PfSenseAuthError):
@@ -145,6 +148,7 @@ class NetgateClient:
         self._login_error: PfSenseAuthError | PfSensePrivilegeError | None = None
         self._write_lock = asyncio.Lock()
         self._shared: dict[str, tuple[float, asyncio.Future]] = {}
+        self._update_info: tuple[float, dict | None] | None = None
 
     # ---------------------------------------------------------------- http
 
@@ -412,8 +416,8 @@ class NetgateClient:
         """The legacy ``telemetry`` dict (see :func:`netgate_map.build_telemetry`).
 
         Interface and gateway status are required; system resource series,
-        gateway config and OpenVPN status degrade to empty values when
-        missing.
+        controller stats (load average), gateway config and OpenVPN status
+        degrade to empty values when missing.
         """
         (
             status,
@@ -424,6 +428,7 @@ class NetgateClient:
             processor,
             sensors,
             mbuf,
+            stats,
         ) = await asyncio.gather(
             self._status(),
             self._get_shared("/system/interfaces/status"),
@@ -433,6 +438,7 @@ class NetgateClient:
             self._optional(self._monitoring("processor")),
             self._optional(self._monitoring("sensors")),
             self._optional(self._monitoring("mbuf")),
+            self._optional(self._get("/controller/stats")),
         )
         return netgate_map.build_telemetry(
             status,
@@ -443,11 +449,21 @@ class NetgateClient:
             processor or {},
             sensors or {},
             mbuf or {},
+            netgate_map.load_average(stats),
         )
 
     async def get_firmware_update_info(self) -> dict | None:
-        """Not consumed by the poll yet (it stores ``None`` for both backends)."""
-        return None
+        """Base-system update status from ``/system/update``, cached for an hour.
+
+        pfSense checks its package repository on its own schedule; this only
+        reads the result, so there is no point asking every poll.
+        """
+        now = time.monotonic()
+        if self._update_info and now - self._update_info[0] < UPDATE_INFO_TTL:
+            return self._update_info[1]
+        info = netgate_map.firmware_update_info(await self._get("/system/update"))
+        self._update_info = (now, info)
+        return info
 
     async def get_dns_servers(self) -> list[str]:
         """System DNS servers from ``/system/setup``."""
@@ -540,73 +556,95 @@ class NetgateClient:
         )
         return netgate_map.carp_interfaces(vips, status)
 
-    # ----------------------------------------- not wired up yet (phase 4+)
+    # ------------------------------------------------------------- writes
     #
-    # Writes and actions. Each raises PfSenseUnsupportedError until phase 4
-    # of the migration plan (issue #11); a few (WOL, generic service control)
-    # have no Nexus endpoint at all.
+    # Each write takes ``_write_lock``, so a change and its apply are never
+    # interleaved with another write. Changes are staged by pfSense ("dirty
+    # subsystems") until ``POST /system/config/dirty {"apply": true}``.
 
-    @staticmethod
-    def _not_yet(name: str) -> PfSenseUnsupportedError:
-        return PfSenseUnsupportedError(
-            f"{name} is not implemented for the Netgate API backend yet"
+    # FwRuleToggle ``value``: ``true`` disables, ``false`` enables (verified
+    # on 26.07 for a filter rule). The toggle applies the filter itself, so
+    # nothing is left dirty; ``_apply_pending`` is kept as a harmless no-op
+    # in case another subsystem needs it.
+    _TOGGLE_VALUE_DISABLES = True
+
+    async def _apply_pending(self) -> None:
+        """Apply every pending (dirty) subsystem change."""
+        await self._request("POST", "/system/config/dirty", payload={"apply": True})
+
+    async def _toggle(self, path: str, rule: dict | None, disabled: bool) -> None:
+        if rule is None:
+            raise PfSenseNotFoundError("rule not found")
+        if bool(rule.get("disabled")) == disabled:
+            return
+        value = disabled if self._TOGGLE_VALUE_DISABLES else not disabled
+        async with self._write_lock:
+            await self._request("POST", path, payload={"value": value})
+            await self._apply_pending()
+
+    async def _filter_rule(self, tracker) -> dict | None:
+        return next(
+            (
+                r
+                for r in await self.get_filter_rules()
+                if str(r.get("tracker")) == str(tracker)
+            ),
+            None,
         )
 
-    async def start_service(
-        self, service_name: str, service: dict | None = None
-    ) -> None:
-        """Not implemented yet."""
-        raise self._not_yet("start_service")
-
-    async def stop_service(
-        self, service_name: str, service: dict | None = None
-    ) -> None:
-        """Not implemented yet."""
-        raise self._not_yet("stop_service")
-
-    async def restart_service(
-        self, service_name: str, service: dict | None = None
-    ) -> None:
-        """Not implemented yet."""
-        raise self._not_yet("restart_service")
-
-    async def restart_service_if_running(
-        self, service_name: str, service: dict | None = None
-    ) -> None:
-        """Not implemented yet."""
-        raise self._not_yet("restart_service_if_running")
-
-    async def delete_arp_entry(self, ip: str) -> None:
-        """Not implemented yet."""
-        raise self._not_yet("delete_arp_entry")
-
-    async def set_default_gateway(self, gateway: str, ip_version: str = "4") -> None:
-        """Not implemented yet."""
-        raise self._not_yet("set_default_gateway")
+    async def _set_filter_rule(self, tracker, disabled: bool) -> None:
+        rule = await self._filter_rule(tracker)
+        path = None
+        if rule is not None:
+            iface = quote(str(rule["interface"]), safe="")
+            path = f"/firewall/rules/interface/{iface}/toggle/{quote(str(rule['id']), safe='')}"
+        await self._toggle(path or "", rule, disabled)
 
     async def enable_filter_rule_by_tracker(self, tracker) -> None:
-        """Not implemented yet."""
-        raise self._not_yet("enable_filter_rule_by_tracker")
+        """Enable the filter rule with this tracker."""
+        await self._set_filter_rule(tracker, False)
 
     async def disable_filter_rule_by_tracker(self, tracker) -> None:
-        """Not implemented yet."""
-        raise self._not_yet("disable_filter_rule_by_tracker")
+        """Disable the filter rule with this tracker."""
+        await self._set_filter_rule(tracker, True)
+
+    async def _set_nat_rule(self, kind: str, created_time, disabled: bool) -> None:
+        rules = (
+            await self.get_nat_port_forward_rules()
+            if kind == "port-forward"
+            else await self.get_nat_outbound_rules()
+        )
+        rule = next(
+            (r for r in rules if str(r.get("created_time")) == str(created_time)), None
+        )
+        path = (
+            f"/firewall/nat/{kind}/toggle/{quote(str(rule['id']), safe='')}"
+            if rule is not None
+            else ""
+        )
+        await self._toggle(path, rule, disabled)
 
     async def enable_nat_port_forward_rule_by_created_time(self, created_time) -> None:
-        """Not implemented yet."""
-        raise self._not_yet("enable_nat_port_forward_rule_by_created_time")
+        """Enable the port-forward rule created at ``created_time``."""
+        await self._set_nat_rule("port-forward", created_time, False)
 
     async def disable_nat_port_forward_rule_by_created_time(self, created_time) -> None:
-        """Not implemented yet."""
-        raise self._not_yet("disable_nat_port_forward_rule_by_created_time")
+        """Disable the port-forward rule created at ``created_time``."""
+        await self._set_nat_rule("port-forward", created_time, True)
 
     async def enable_nat_outbound_rule_by_created_time(self, created_time) -> None:
-        """Not implemented yet."""
-        raise self._not_yet("enable_nat_outbound_rule_by_created_time")
+        """Enable the outbound NAT rule created at ``created_time``."""
+        await self._set_nat_rule("outbound", created_time, False)
 
     async def disable_nat_outbound_rule_by_created_time(self, created_time) -> None:
-        """Not implemented yet."""
-        raise self._not_yet("disable_nat_outbound_rule_by_created_time")
+        """Disable the outbound NAT rule created at ``created_time``."""
+        await self._set_nat_rule("outbound", created_time, True)
+
+    # ------------------------------------------------------------- aliases
+
+    async def _aliases(self) -> list[dict]:
+        body = await self._get("/aliases") or {}
+        return [a for a in body.get("aliases") or [] if isinstance(a, dict)]
 
     async def update_alias_address(
         self,
@@ -615,33 +653,249 @@ class NetgateClient:
         action: str = "add",
         kill_states: bool = True,
     ) -> None:
-        """Not implemented yet."""
-        raise self._not_yet("update_alias_address")
+        """Add or remove an address in a host/network alias, then apply.
+
+        Nexus stores alias entries as ``targets`` (``{name: <address>,
+        descr: <detail>}``); the ``address`` / ``detail`` strings are left
+        empty and are ignored on write (verified on 26.07). A missing alias is
+        created as a host alias on ``add``.
+        """
+        aliases = await self._aliases()
+        target = next((a for a in aliases if a.get("name") == alias_name), None)
+        entry = {"name": address, "descr": "Added via HASS"}
+        if target is None:
+            if action != "add":
+                return
+            payload = {
+                "name": alias_name,
+                "type": "host",
+                "descr": "Managed automatically by Home Assistant",
+                "targets": [entry],
+            }
+            async with self._write_lock:
+                await self._request("PUT", "/aliases", payload=payload)
+                await self._apply_pending()
+        else:
+            targets = [t for t in target.get("targets") or [] if isinstance(t, dict)]
+            present = any(t.get("name") == address for t in targets)
+            if action == "add" and not present:
+                targets.append(entry)
+            elif action == "remove" and present:
+                targets = [t for t in targets if t.get("name") != address]
+            else:
+                return
+            payload = {
+                key: target[key]
+                for key in ("name", "type", "descr", "tags", "updatefreq")
+                if key in target
+            }
+            payload["targets"] = targets
+            alias_id = quote(str(target.get("id")), safe="")
+            async with self._write_lock:
+                await self._request("POST", f"/aliases/{alias_id}", payload=payload)
+                await self._apply_pending()
+        if kill_states:
+            await self.kill_states(address)
+
+    # --------------------------------------------------------------- states
 
     async def reset_state_table(self) -> None:
-        """Not implemented yet."""
-        raise self._not_yet("reset_state_table")
+        """Flush the whole state table (``pfctl -F states``)."""
+        await self.exec_command("/sbin/pfctl -F states")
 
     async def kill_states(self, source: str, destination: str | None = None) -> None:
-        """Not implemented yet."""
-        raise self._not_yet("kill_states")
+        """Kill states from ``source`` (optionally only to ``destination``).
+
+        ``DELETE /diag/states`` needs ``srcip`` and ``dstip`` together, and
+        its ``filter_str`` is a substring match (``10.0.0.1`` would also hit
+        ``10.0.0.10``). So list the states mentioning ``source``, keep the
+        exact matches, and delete each src/dst pair. A state is matched with
+        ``source`` on either side, like ``pfctl -k``-based pfrest killing.
+        """
+        body = await self._request("GET", "/diag/states", params={"filter_str": source})
+        pairs: set[tuple[str, str]] = set()
+        for state in (body or {}).get("states") or []:
+            if not isinstance(state, dict):
+                continue
+            src, dst = str(state.get("src") or ""), str(state.get("dst") or "")
+            if source not in (src, dst) or not src or not dst:
+                continue
+            if destination and destination not in (src, dst):
+                continue
+            pairs.add((src, dst))
+        for src, dst in sorted(pairs):
+            with contextlib.suppress(PfSenseNotFoundError):
+                await self._request(
+                    "DELETE", "/diag/states", params={"srcip": src, "dstip": dst}
+                )
 
     async def kill_states_for_rule(self, rule: dict) -> None:
-        """Not implemented yet."""
-        raise self._not_yet("kill_states_for_rule")
+        """Kill states of the single hosts a rule matches on (best effort).
+
+        Host addresses and the host entries of aliases are used; networks,
+        interface macros (``lan``, ``wanip``), ``any`` and negations are
+        skipped, since state deletion works per IP.
+        """
+        hosts: set[str] = set()
+        aliases: list[dict] | None = None
+        for side in ("source", "destination"):
+            spec = rule.get(side)
+            if not isinstance(spec, dict) or spec.get("not") or spec.get("any"):
+                continue
+            value = str(spec.get("address") or "").strip()
+            if not value:
+                continue
+            net = _as_network(value)
+            if net is None:
+                if aliases is None:
+                    aliases = [
+                        {
+                            **a,
+                            "address": [
+                                str(t.get("name") or "")
+                                for t in a.get("targets") or []
+                                if isinstance(t, dict)
+                            ],
+                        }
+                        for a in await self._aliases()
+                    ]
+                nets = _expand_alias_networks(aliases, value)
+            else:
+                nets = [net]
+            hosts.update(str(n.network_address) for n in nets if n.num_addresses == 1)
+        for ip in sorted(hosts):
+            await self.kill_states(ip)
+
+    async def delete_arp_entry(self, ip: str) -> None:
+        """Delete one ARP entry (missing entries are ignored)."""
+        if not ip:
+            return
+        with contextlib.suppress(PfSenseNotFoundError):
+            await self._request("DELETE", f"/diag/arp/{quote(ip, safe='')}")
+
+    # ------------------------------------------------------------- gateways
+
+    async def set_default_gateway(self, gateway: str, ip_version: str = "4") -> None:
+        """Make ``gateway`` the default IPv4/IPv6 gateway, then apply.
+
+        Nexus sets defaults through a gateway update carrying ``defaults``.
+        LIVE-CHECK: the gateway id is assumed to be its list index.
+        """
+        body = await self._get("/system/gateways") or {}
+        gateways = [g for g in body.get("gateways") or [] if isinstance(g, dict)]
+        index = next(
+            (i for i, g in enumerate(gateways) if g.get("name") == gateway), None
+        )
+        if index is None:
+            raise PfSenseNotFoundError(f"gateway {gateway!r} not found")
+        key = "defaultgw6" if "6" in str(ip_version) else "defaultgw4"
+        defaults = dict(body.get("defaults") or {})
+        if defaults.get(key) == gateway:
+            return
+        defaults[key] = gateway
+        payload = {**gateways[index], "defaults": defaults}
+        async with self._write_lock:
+            await self._request("PUT", f"/system/gateways/{index}", payload=payload)
+            await self._apply_pending()
+
+    # ------------------------------------------------------ system control
 
     async def system_reboot(self, type: str = "normal") -> None:
-        """Not implemented yet."""
-        raise self._not_yet("system_reboot")
+        """Reboot the firewall (``fsck`` reboots with a filesystem check)."""
+        action = "rebootfsck" if type == "fsck" else "reboot"
+        # The connection drops as the box goes down; that is success.
+        with contextlib.suppress(PfSenseConnectionError):
+            await self._request("POST", "/diag/control", payload={"action": action})
 
     async def system_halt(self) -> None:
-        """Not implemented yet."""
-        raise self._not_yet("system_halt")
+        """Halt (power off) the firewall."""
+        with contextlib.suppress(PfSenseConnectionError):
+            await self._request("POST", "/diag/control", payload={"action": "halt"})
+
+    # ------------------------------------------------------ shell-backed
+    #
+    # Nexus has no endpoint for generic service control or Wake-on-LAN, so
+    # these run pfSense's own tools through ``POST /diag/cmd/shell`` (which
+    # needs the shell privilege). ``pfSsh.php`` is PHP, so service control
+    # here shares pfrest's PHP dependency until Netgate adds an endpoint.
+
+    async def exec_command(self, command: str, background: bool = False) -> str:
+        """Run a shell command and return its output."""
+        if background:
+            command = f"nohup {command} >/dev/null 2>&1 &"
+        body = await self._request(
+            "POST",
+            "/diag/cmd/shell",
+            payload={"cmd": _b64(command), "timeout": 60},
+        )
+        raw = str(body.get("response") or "") if isinstance(body, dict) else ""
+        # The response is base64 (verified on 26.07); fall back to raw text.
+        try:
+            return base64.b64decode(raw, validate=True).decode(errors="replace")
+        except (binascii.Error, ValueError):
+            return raw
+
+    async def _service_command(
+        self, service_name: str, service: dict | None, action: str
+    ) -> None:
+        args = ["svc", action, service_name]
+        # LIVE-CHECK: OpenVPN instances take ``<mode> <vpnid>``.
+        if (
+            service_name == "openvpn"
+            and isinstance(service, dict)
+            and service.get("vpnid")
+        ):
+            args += [str(service.get("mode") or "server"), str(service["vpnid"])]
+        await self.exec_command(
+            "/usr/local/sbin/pfSsh.php playback " + " ".join(_shq(a) for a in args)
+        )
+
+    async def start_service(
+        self, service_name: str, service: dict | None = None
+    ) -> None:
+        """Start a service."""
+        await self._service_command(service_name, service, "start")
+
+    async def stop_service(
+        self, service_name: str, service: dict | None = None
+    ) -> None:
+        """Stop a service."""
+        await self._service_command(service_name, service, "stop")
+
+    async def restart_service(
+        self, service_name: str, service: dict | None = None
+    ) -> None:
+        """Restart a service."""
+        await self._service_command(service_name, service, "restart")
+
+    async def restart_service_if_running(
+        self, service_name: str, service: dict | None = None
+    ) -> None:
+        """Restart a service only if it is running."""
+        svc = next(
+            (s for s in await self.get_services() if s.get("name") == service_name),
+            None,
+        )
+        if svc and svc.get("status"):
+            await self._service_command(service_name, service or svc, "restart")
 
     async def send_wol(self, interface: str, mac: str) -> None:
-        """Not implemented yet."""
-        raise self._not_yet("send_wol")
-
-    async def exec_command(self, command: str, background: bool = False) -> Any:
-        """Not implemented yet."""
-        raise self._not_yet("exec_command")
+        """Send a Wake-on-LAN packet to the interface's broadcast address."""
+        body = await self._get_shared("/system/interfaces/status") or {}
+        iface = next(
+            (
+                i
+                for i in body.get("interfaces") or []
+                if isinstance(i, dict)
+                and interface in (i.get("identity"), i.get("assigned_name"))
+            ),
+            None,
+        )
+        if iface is None or not iface.get("ip_address") or not iface.get("subnet_mask"):
+            raise PfSenseNotFoundError(f"no IPv4 address on interface {interface!r}")
+        network = ipaddress.ip_network(
+            f"{iface['ip_address']}/{iface['subnet_mask']}", strict=False
+        )
+        await self.exec_command(
+            f"/usr/local/bin/wol -i {_shq(str(network.broadcast_address))} {_shq(mac)}"
+        )
