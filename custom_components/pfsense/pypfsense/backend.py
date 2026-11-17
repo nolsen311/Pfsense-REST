@@ -42,6 +42,12 @@ class PfSenseBackend(Protocol):
     async def start_firmware_update(self) -> None:
         """Start a base-system upgrade (the firewall reboots during it)."""
 
+    async def get_installed_packages(self) -> list[dict]:
+        """Return add-on packages: name, installed/latest version, update flag."""
+
+    async def install_package_update(self, name: str) -> None:
+        """Upgrade one installed add-on package to its latest version."""
+
     async def get_dns_servers(self) -> list[str]:
         """Return the configured system DNS servers."""
 

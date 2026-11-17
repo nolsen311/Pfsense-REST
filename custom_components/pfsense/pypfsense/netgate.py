@@ -153,6 +153,8 @@ class NetgateClient:
         self._shared: dict[str, tuple[float, asyncio.Future]] = {}
         self._update_info: tuple[float, dict | None] | None = None
         self._upgrade_from: str | None = None
+        self._packages: tuple[float, list[dict]] | None = None
+        self._package_upgrading: dict[str, str] = {}
 
     # ---------------------------------------------------------------- http
 
@@ -495,6 +497,47 @@ class NetgateClient:
                 )
         self._upgrade_from = installed
         self._update_info = None
+
+    async def get_installed_packages(self) -> list[dict]:
+        """Add-on packages and their available updates, cached for an hour.
+
+        While a package upgrade is pending, re-read every minute until its
+        installed version changes.
+        """
+        now = time.monotonic()
+        ttl = UPDATE_INFO_TTL_UPGRADING if self._package_upgrading else UPDATE_INFO_TTL
+        if self._packages and now - self._packages[0] < ttl:
+            return self._packages[1]
+        packages = netgate_map.installed_packages(
+            await self._get("/system/package/installed")
+        )
+        self._packages = (now, packages)
+        for pkg in packages:
+            if self._package_upgrading.get(pkg["name"]) not in (
+                None,
+                pkg["installed_version"],
+            ):
+                del self._package_upgrading[pkg["name"]]  # it landed
+        return packages
+
+    async def install_package_update(self, name: str) -> None:
+        """Upgrade one installed package to its latest version.
+
+        ``POST /system/package/install {"packages": [{"name": <pkg name>}]}``;
+        the package is named as pfSense lists it (``pfSense-pkg-<name>``).
+        """
+        packages = await self.get_installed_packages()
+        pkg = next((p for p in packages if p["name"] == name), None)
+        if pkg is None:
+            raise PfSenseNotFoundError(f"package {name!r} is not installed")
+        async with self._write_lock:
+            await self._request(
+                "POST",
+                "/system/package/install",
+                payload={"packages": [{"name": pkg["package"]}]},
+            )
+        self._package_upgrading[name] = pkg["installed_version"]
+        self._packages = None
 
     async def get_dns_servers(self) -> list[str]:
         """System DNS servers from ``/system/setup``."""

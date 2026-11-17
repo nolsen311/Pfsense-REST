@@ -184,6 +184,11 @@ want in the entity settings.
     connection until it's back. The entity shows "installing" until the new
     version is reported.
 
+- **Package \<name\>** (Netgate API): one update entity per installed add-on
+  package, showing the installed and latest version. **Install** upgrades the
+  package to the latest version from pfSense's package catalog. The list is
+  checked once an hour.
+
 ### Health (diagnostic)
 
 Shown under the device's **Diagnostic** section, and they stay available while

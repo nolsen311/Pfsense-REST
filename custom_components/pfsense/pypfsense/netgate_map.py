@@ -454,3 +454,33 @@ def load_average(stats: Any) -> dict | None:
         "five_minute": round(_ewma(samples, 5), 2),
         "fifteen_minute": round(_ewma(samples, 15), 2),
     }
+
+
+def installed_packages(body: Any) -> list[dict]:
+    """``/system/package/installed`` → one dict per add-on package.
+
+    Without ``remote_check`` (a 15 s repository query) ``update_available``
+    and ``available_version`` stay empty, but ``version`` already holds the
+    latest version from pfSense's cached catalog, so an update is
+    ``version != installed_version``.
+    """
+    out = []
+    for pkg in _items(body, "packages"):
+        name = pkg.get("internal_name") or pkg.get("name")
+        installed = pkg.get("installed_version") or None
+        if not name or not installed:
+            continue
+        latest = pkg.get("available_version") or pkg.get("version") or installed
+        out.append(
+            {
+                "name": name,
+                "package": pkg.get("name") or name,
+                "descr": pkg.get("descr") or None,
+                "category": pkg.get("category") or None,
+                "installed_version": installed,
+                "latest_version": latest,
+                "update_available": bool(pkg.get("update_available"))
+                or latest != installed,
+            }
+        )
+    return out

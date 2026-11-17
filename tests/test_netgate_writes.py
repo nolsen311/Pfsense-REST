@@ -419,3 +419,51 @@ async def test_upgrade_tracking_ends_when_version_changes(client) -> None:
         info = await client.get_firmware_update_info()
     assert info["base"]["installed_version"] == "26.10"
     assert client._upgrade_from is None
+
+
+_PKGS = {
+    "packages": [
+        {
+            "name": "pfSense-pkg-System_Patches",
+            "internal_name": "System_Patches",
+            "installed_version": "2.3.5_1",
+            "version": "2.3.6",
+        }
+    ]
+}
+
+
+async def test_install_package_update(client) -> None:
+    """The package is installed by its pfSense name; status re-read soon after."""
+    with aioresponses() as m:
+        m.post(f"{API}/login", payload={"token": _jwt()})
+        m.get(f"{API}/system/package/installed", payload=_PKGS, repeat=True)
+        m.post(f"{API}/system/package/install", payload={"transaction": "t1"})
+        await client.install_package_update("System_Patches")
+        (call,) = _calls(m, "POST", f"{API}/system/package/install")
+        assert call.kwargs["json"] == {
+            "packages": [{"name": "pfSense-pkg-System_Patches"}]
+        }
+        assert client._package_upgrading == {"System_Patches": "2.3.5_1"}
+        before = len(_calls(m, "GET", f"{API}/system/package/installed"))
+        await client.get_installed_packages()  # cache dropped after install
+        assert len(_calls(m, "GET", f"{API}/system/package/installed")) == before + 1
+        with pytest.raises(PfSenseNotFoundError):
+            await client.install_package_update("nope")
+
+
+async def test_package_cache_and_upgrade_tracking(client) -> None:
+    """Hourly cache; an upgrade is tracked until the version changes."""
+    done = {"packages": [{**_PKGS["packages"][0], "installed_version": "2.3.6"}]}
+    with aioresponses() as m:
+        m.post(f"{API}/login", payload={"token": _jwt()})
+        m.get(f"{API}/system/package/installed", payload=_PKGS)
+        m.get(f"{API}/system/package/installed", payload=done)
+        await client.get_installed_packages()
+        await client.get_installed_packages()
+        assert len(_calls(m, "GET", f"{API}/system/package/installed")) == 1
+        client._package_upgrading = {"System_Patches": "2.3.5_1"}
+        client._packages = (client._packages[0] - 61, client._packages[1])
+        (pkg,) = await client.get_installed_packages()
+    assert pkg["installed_version"] == "2.3.6"
+    assert client._package_upgrading == {}

@@ -58,6 +58,7 @@ def _full_client_mock():
     client.get_nat_port_forward_rules.return_value = []
     client.get_nat_outbound_rules.return_value = []
     client.get_firmware_update_info.return_value = None
+    client.get_installed_packages.return_value = []
     client.get_arp_table.return_value = []
     return client
 
@@ -347,3 +348,75 @@ async def test_update_entity_shows_base_versions(hass: HomeAssistant):
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
+
+
+PKG_ENTITY = "update.router_local_package_system_patches"
+
+
+@pytest.mark.asyncio
+async def test_package_update_entity_installs(hass: HomeAssistant):
+    """A package with a newer catalog version can be installed and tracked."""
+    client = _full_client_mock()
+    client.get_installed_packages.return_value = [
+        {
+            "name": "System_Patches",
+            "package": "pfSense-pkg-System_Patches",
+            "installed_version": "2.3.5_1",
+            "latest_version": "2.3.6",
+            "update_available": True,
+        }
+    ]
+    entry = _netgate_entry()
+    await _setup(hass, entry, client)
+
+    state = hass.states.get(PKG_ENTITY)
+    assert state.state == "on"
+    assert state.attributes["latest_version"] == "2.3.6"
+    assert state.attributes["supported_features"] & UpdateEntityFeature.INSTALL
+
+    await hass.services.async_call(
+        "update", "install", {"entity_id": PKG_ENTITY}, blocking=True
+    )
+    client.install_package_update.assert_awaited_once_with("System_Patches")
+    assert hass.states.get(PKG_ENTITY).attributes["in_progress"] is True
+
+    client.get_installed_packages.return_value = [
+        {
+            "name": "System_Patches",
+            "package": "pfSense-pkg-System_Patches",
+            "installed_version": "2.3.6",
+            "latest_version": "2.3.6",
+            "update_available": False,
+        }
+    ]
+    await hass.data[DOMAIN][entry.entry_id]["coordinator"].async_refresh()
+    await hass.async_block_till_done()
+    state = hass.states.get(PKG_ENTITY)
+    assert (state.state, state.attributes["in_progress"]) == ("off", False)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.asyncio
+async def test_package_entity_has_no_install_on_pfrest(hass: HomeAssistant):
+    """Pfrest entries never get Install on package entities."""
+    client = _full_client_mock()
+    client.get_installed_packages.return_value = [
+        {"name": "acme", "installed_version": "1", "latest_version": "2"}
+    ]
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=5,
+        title="router.local",
+        unique_id="abc",
+        data={
+            CONF_URL: "https://192.168.1.1:8444",
+            CONF_API_KEY: "k",
+            "backend": "pfrest",
+            "auth_method": "api_key",
+        },
+        options={"device_tracker_enabled": False},
+    )
+    await _setup(hass, entry, client)
+    state = hass.states.get("update.router_local_package_acme")
+    assert not state.attributes["supported_features"] & UpdateEntityFeature.INSTALL
+    assert await hass.config_entries.async_unload(entry.entry_id)
