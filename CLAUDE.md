@@ -435,6 +435,9 @@ current state of the repo — read it before touching tooling, tests or a releas
   **pre-release**, so HACS users on default settings are not offered it;
   `release.yml` preserves the prerelease/draft flag, so promote it in the
   GitHub UI when ready).
+  `v0.11.0` is the Netgate API backend: Reconfigure, firmware info and an
+  opt-in install. It was published as **Latest**, skipping a pre-release
+  because the repo has no known users yet.
 
 ## Target environment (confirmed)
 
