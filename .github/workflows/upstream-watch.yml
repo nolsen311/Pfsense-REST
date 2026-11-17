@@ -1,0 +1,175 @@
+name: Upstream watch
+
+# Weekly check of everything this integration depends on but does not control:
+#   - pfrest (the community REST API package): releases, the end-of-life
+#     discussion #962, and any newer discussion (announcements land there)
+#   - Netgate's official API spec (Netgate/pfsense-api) and Netgate's blog
+#   - The pfSense 26.10 release-notes page (exists once 26.10 ships)
+#   - The upstream integration we were forked from (DonTranQuiL/Pfsense-pro)
+#
+# State lives in a hidden JSON marker inside this workflow's last comment on
+# the open issue labelled `upstream-watch`. A comment is posted only when
+# something changed, so the issue's subscribers get notified exactly then.
+# If a source cannot be fetched its previous value is kept (no flapping) and
+# the run fails, so a broken source is visible in Actions.
+
+on:
+  schedule:
+    - cron: "17 13 * * 1" # Mondays 13:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: upstream-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check upstream sources
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const LABEL = "upstream-watch";
+            const MARKER = "upstream-watch-state";
+            const { owner, repo } = context.repo;
+            const failures = [];
+
+            // ---------- sources ----------
+            // Each returns {value, label, url}. `value` is what gets compared.
+            const sources = {
+              pfrest_release: async () => {
+                const { data } = await github.rest.repos.getLatestRelease({
+                  owner: "pfrest", repo: "pfSense-pkg-RESTAPI",
+                });
+                return { value: data.tag_name, label: `pfrest latest release: **${data.name}**`, url: data.html_url };
+              },
+              pfrest_eol_discussion: async () => {
+                const q = `{repository(owner:"pfrest",name:"pfSense-pkg-RESTAPI"){discussion(number:962){updatedAt url comments(last:1){totalCount nodes{author{login} createdAt}}}}}`;
+                const d = (await github.graphql(q)).repository.discussion;
+                const last = d.comments.nodes[0];
+                return {
+                  value: `${d.updatedAt}|${d.comments.totalCount}`,
+                  label: `pfrest #962 "Moving Forward": ${d.comments.totalCount} comment(s), updated ${d.updatedAt}` +
+                    // Backticked login, never a bare @mention: the bot must not ping strangers.
+                    (last ? ` (latest by \`${last.author?.login ?? "ghost"}\` at ${last.createdAt})` : ""),
+                  url: d.url,
+                };
+              },
+              pfrest_newest_discussion: async () => {
+                const q = `{repository(owner:"pfrest",name:"pfSense-pkg-RESTAPI"){discussions(first:1,orderBy:{field:CREATED_AT,direction:DESC}){nodes{number title url category{name}}}}}`;
+                const n = (await github.graphql(q)).repository.discussions.nodes[0];
+                return { value: String(n.number), label: `pfrest newest discussion: #${n.number} "${n.title}" [${n.category.name}]`, url: n.url };
+              },
+              netgate_api_spec: async () => {
+                const { data } = await github.rest.repos.listCommits({
+                  owner: "Netgate", repo: "pfsense-api", per_page: 1,
+                });
+                const c = data[0];
+                return {
+                  value: c.sha,
+                  label: `Netgate/pfsense-api head: \`${c.sha.slice(0, 7)}\` ${c.commit.message.split("\n")[0]} (${c.commit.author.date.slice(0, 10)})`,
+                  url: c.html_url,
+                };
+              },
+              netgate_blog: async () => {
+                const r = await fetch("https://www.netgate.com/blog/rss.xml", { headers: { "User-Agent": "Mozilla/5.0 (upstream-watch)" } });
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                const xml = await r.text();
+                const item = xml.match(/<item>([\s\S]*?)<\/item>/);
+                if (!item) throw new Error("no <item> in feed");
+                const tag = (t) => (item[1].match(new RegExp(`<${t}>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?</${t}>`)) || [])[1]?.trim();
+                const title = tag("title"), link = tag("link"), date = tag("pubDate");
+                const relevant = /pfsense|api|nexus|php|deprecat/i.test(title ?? "");
+                return { value: link, label: `Netgate blog newest: "${title}" (${date})${relevant ? " ⚠️ looks relevant" : ""}`, url: link };
+              },
+              pfsense_2610_notes: async () => {
+                const url = "https://docs.netgate.com/pfsense/en/latest/releases/26-10.html";
+                const r = await fetch(url, { method: "HEAD", redirect: "follow", headers: { "User-Agent": "Mozilla/5.0 (upstream-watch)" } });
+                if (r.status >= 500) throw new Error(`HTTP ${r.status}`);
+                const up = r.ok;
+                return { value: up ? "published" : "absent", label: `pfSense 26.10 release notes: ${up ? "**published**" : "not published yet"}`, url };
+              },
+              upstream_fork: async () => {
+                const { data } = await github.rest.repos.listCommits({
+                  owner: "DonTranQuiL", repo: "Pfsense-pro", per_page: 1,
+                });
+                const c = data[0];
+                return {
+                  value: c.sha,
+                  label: `DonTranQuiL/Pfsense-pro head: \`${c.sha.slice(0, 7)}\` ${c.commit.message.split("\n")[0]} (${c.commit.author.date.slice(0, 10)})`,
+                  url: c.html_url,
+                };
+              },
+              upstream_fork_release: async () => {
+                const { data } = await github.rest.repos.listReleases({
+                  owner: "DonTranQuiL", repo: "Pfsense-pro", per_page: 1,
+                });
+                const rel = data[0];
+                return { value: rel?.tag_name ?? "none", label: `DonTranQuiL/Pfsense-pro newest release: ${rel?.name ?? "none"}`, url: rel?.html_url };
+              },
+            };
+
+            // ---------- tracking issue + previous state ----------
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, labels: LABEL, state: "open", per_page: 100,
+            });
+            if (issues.length === 0) {
+              core.setFailed(`No open issue labelled "${LABEL}". Open one (or re-label the tracking issue) and re-run.`);
+              return;
+            }
+            const issue = issues.sort((a, b) => a.number - b.number)[0];
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number: issue.number, per_page: 100,
+            });
+            const re = new RegExp(`<!-- ${MARKER} (\\{[\\s\\S]*?\\}) -->`);
+            let prev = null;
+            for (const c of comments.reverse()) {
+              const m = c.body?.match(re);
+              if (m) { prev = JSON.parse(m[1]); break; }
+            }
+
+            // ---------- poll ----------
+            const state = {}, lines = {}, changed = [];
+            for (const [key, fn] of Object.entries(sources)) {
+              try {
+                const r = await fn();
+                state[key] = r.value;
+                lines[key] = r.url ? `${r.label} — ${r.url}` : r.label;
+                if (prev && prev[key] !== undefined && prev[key] !== r.value) changed.push(key);
+                if (prev && prev[key] === undefined) changed.push(key);
+              } catch (e) {
+                failures.push(`${key}: ${e.message}`);
+                if (prev && prev[key] !== undefined) state[key] = prev[key];
+                lines[key] = `${key}: ⚠️ fetch failed (${e.message}); kept previous value`;
+              }
+            }
+
+            const summary = Object.values(lines).map((l) => `- ${l}`).join("\n");
+            await core.summary.addHeading("Upstream watch").addRaw(summary, true).write();
+
+            // ---------- report ----------
+            const stateMarker = `<!-- ${MARKER} ${JSON.stringify(state)} -->`;
+            if (!prev) {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: issue.number,
+                body: `### Upstream watch — baseline recorded\n\n${summary}\n\nFuture runs comment here only when one of these changes.\n\n${stateMarker}`,
+              });
+              core.info(`Baseline recorded on #${issue.number}`);
+            } else if (changed.length) {
+              const changedLines = changed.map((k) => `- ${lines[k]}`).join("\n");
+              const unchanged = Object.keys(lines).filter((k) => !changed.includes(k)).map((k) => `- ${lines[k]}`).join("\n");
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: issue.number,
+                body: `### Upstream watch — ${changed.length} change(s)\n\n**Changed**\n${changedLines}\n\n<details><summary>Unchanged</summary>\n\n${unchanged}\n\n</details>\n\n${stateMarker}`,
+              });
+              core.info(`Reported ${changed.length} change(s) on #${issue.number}`);
+            } else {
+              core.info("No changes.");
+            }
+
+            if (failures.length) core.setFailed(`Some sources failed:\n${failures.join("\n")}`);

@@ -37,11 +37,31 @@ rules, services, aliases and routing from Home Assistant.
 > This integration speaks REST v2 only. pfSense installs without the REST API
 > package, or older than the version it requires, are not supported.
 
+> [!WARNING]
+> **The REST API package is entering end of life.** Netgate is building a native
+> API into pfSense (starting with 26.10) and plans to remove the PHP codebase
+> the community REST API package depends on at some point after 26.10. The
+> package is now in maintenance mode — see
+> [pfrest discussion #962](https://github.com/pfrest/pfSense-pkg-RESTAPI/discussions/962).
+> This integration keeps working for as long as the package does; migration to
+> Netgate's official API is tracked in this repo's issues.
+
 ---
 
 ## Installation
 
-### HACS (recommended)
+### Marketplace (Home Assistant 2026.11 and newer)
+
+This integration is not in the HACS default catalog, so it will not show up in
+a Marketplace search. Add it by link instead:
+
+1. Go to **Settings → Marketplace**, then select **Add from link** in the
+   upper-right corner.
+2. Enter `https://github.com/nolsen311/Pfsense-REST`, select **Add**, then open
+   **pfSense Pro** and select **Install**. Setup starts right away; no restart
+   is needed.
+
+### HACS (Home Assistant before 2026.11)
 
 1. In **HACS**, open the three-dot menu → **Custom repositories**.
 2. Add the repository URL and set the category to **Integration**:

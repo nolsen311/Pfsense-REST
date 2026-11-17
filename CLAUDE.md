@@ -3,7 +3,7 @@
 Working plan for migrating this Home Assistant integration off XML-RPC and onto the
 pfSense REST API v2 (target: pfSense 26.07+).
 
-Repo: https://github.com/nolsen311/Pfsense-pro (fork of DonTranQuiL/pfsense-pro)
+Repo: https://github.com/nolsen311/Pfsense-REST (de-forked from DonTranQuiL/Pfsense-pro)
 
 ## Status of this document
 
@@ -28,7 +28,7 @@ Resolved on hardware since the first draft — see "Findings from live hardware"
 GUI-authored rules; `PATCH /firewall/rule` and empty `statetype`.
 
 The integration has since been rewritten and shipped (all seven phases below are
-done; see repo history through `v0.10.1`). This document is now two things: the
+done; see repo history through `v0.10.2`). This document is now two things: the
 reference for pfRest behaviour, and — in "Project state & conventions" — how the
 repo is built, tested and released.
 
@@ -106,6 +106,78 @@ integration. Keep the tag, `manifest.json`, and shipped content in lockstep
 (see `.github/workflows/release.yml`, which now *verifies* tag == manifest
 rather than rewriting the manifest after the tag).
 
+## pfrest end of life & Netgate's official API
+
+**This integration's transport has an expiry date.** Read this before planning
+any significant feature work.
+
+- **Announcement:** pfrest discussion #962 "Moving Forward" (2026-10-30),
+  https://github.com/pfrest/pfSense-pkg-RESTAPI/discussions/962, following
+  Netgate's "pfSense at 20" post (2026-10-29,
+  https://www.netgate.com/blog/pfsense-at-20).
+- **What Netgate announced:** pfSense CE and Plus reconverge into one edition
+  starting with **26.10** ("before the end of November" 2026). Every install
+  gets Netgate's built-in API (the Go-based Nexus controller, previously Plus
+  only). The PHP GUI/codebase will be removed "with notice" once the new GUI
+  covers everything. **No removal date.**
+- **What it means for pfrest:** it is a PHP package, so it stops working the
+  day PHP is removed. It is now in **maintenance mode** (bug/security fixes and
+  compatibility releases only; it will keep supporting PHP-based releases that
+  Netgate still supports). The maintainer says the official API "is not
+  entirely 1:1" with pfrest — expect regressions on migration.
+- **pfrest v2.11.0** (2026-11-01) is the first release carrying the EOL
+  banner. Its fixes (HAProxy, ACME, Service `name` uniqueness, a
+  `page-system-restapi-documentation` privilege) touch nothing this
+  integration calls; v2.10.2 and v2.11.0 are interchangeable for us.
+- **Official API spec:** https://github.com/Netgate/pfsense-api —
+  `pfapi_openapi.yml` (OpenAPI, ~486 paths, title "pfSense API 1.0"; last
+  synced to 26.03 + Snort-3 on 2026-05-25), rendered docs at
+  https://netgate.github.io/pfsense-api, Python examples in the repo. No
+  `servers` or `securitySchemes` in the spec; auth is session/JWT via
+  `POST /login` (+ `/login/refresh`), not an `x-api-key`. Paths are
+  unversioned and flat (`/system/status`, `/system/gateways/status`,
+  `/services/dhcp/leases`, `/diag/arp`, `/diag/states`,
+  `/firewall/rules/interface/...`, `/firewall/nat/port-forward`,
+  `/firewall/nat/outbound`, `/services/carp/status`, `/services/status`,
+  `/vpn/openvpn/status`, `/system/update`, `/diag/control`). Every surface in
+  "Actually-consumed client surface" below has a plausible counterpart, but
+  field shapes are unverified — **a port is a client-layer rewrite**, not a
+  path swap. The `pypfsense` boundary plus the poll-state contract ("Consumer
+  contracts" below) are what make that feasible without touching entities.
+- **Tracking:** the migration plan lives in the GitHub issue labelled
+  `upstream-watch`. `.github/workflows/upstream-watch.yml` runs weekly (and on
+  `workflow_dispatch`) and comments on that issue when any of these change:
+  pfrest latest release, #962 activity, pfrest's newest discussion,
+  `Netgate/pfsense-api` head, the Netgate blog feed
+  (`https://www.netgate.com/blog/rss.xml`), whether
+  `docs.netgate.com/.../releases/26-10.html` exists, and the
+  `DonTranQuiL/Pfsense-pro` head/release. Its state is a hidden
+  `<!-- upstream-watch-state {...} -->` JSON marker in its last comment;
+  deleting those comments resets it to a fresh baseline. A failing source
+  keeps its old value and fails the run.
+
+## Upstream (DonTranQuiL/Pfsense-pro) sync log
+
+Upstream is still XML-RPC, so its code changes rarely port. Last reviewed at
+upstream `17c399c` (2026-11-05); fork point was `89ccddc` (2026-06-17).
+
+- **Taken:** `manifest.json` `categories` (HA 2026.11 Marketplace), the
+  Marketplace install section of the README, the GitHub Actions major bumps
+  (checkout/setup-python v7, cache v6, stale v11) and the stale bot's
+  `exempt-pr-labels: dependencies`.
+- **Not applicable:** the null-`get_config()` guard (upstream #9) — our
+  coordinator either returns a fully-populated state from one
+  `asyncio.gather` or the cached state, so `services` / rule lists are never
+  `None`; upstream's `ruff.toml` ignore list (we run the full HA rule set);
+  the `ai_engineer/` workflows (removed here, later removed upstream too).
+- **Skipped by choice:** Discord release announcements, Liberapay
+  `FUNDING.yml`, the `www/pfsense-command-center.js` Lovelace card (it reads
+  upstream's entity set; would need checking against our pruned sensors).
+- PR numbers #1–#8 in this repo's history are upstream's (they predate the
+  de-fork); their merge commits are not on our `main`. With the `upstream`
+  remote added locally, run `gh repo set-default nolsen311/Pfsense-REST` or
+  `gh` may target upstream, and don't push upstream's `v2.x` tags.
+
 ## Project state & conventions
 
 Everything below the migration plan is done and released. This section is the
@@ -170,16 +242,18 @@ current state of the repo — read it before touching tooling, tests or a releas
    patch bump off the last tag — override the tag when it's wrong.
 - Version must only ever increase (HACS treats a lower manifest/tag as a
   downgrade and shows no update — see the HACS aside above).
-- Released so far: `v0.9.0`, `v0.9.1`, `v0.9.3` (skipped `v0.9.2`), `v0.10.0`;
-  `v0.10.1` in progress (docs/tooling + the CARP binary sensor now enabled by
-  default).
+- Released so far: `v0.9.0`, `v0.9.1`, `v0.9.3` (skipped `v0.9.2`), `v0.10.0`,
+  `v0.10.1` (marked Latest), `v0.10.2` (auth methods — published as a
+  **pre-release**, so HACS users on default settings are not offered it;
+  `release.yml` preserves the prerelease/draft flag, so promote it in the
+  GitHub UI when ready).
 
 ## Target environment (confirmed)
 
 | Fact | Value |
 | --- | --- |
 | pfSense | `26.07-RELEASE` (base `26.07`, patch `0`) |
-| REST API package | community **pfSense-pkg-RESTAPI v2.10.2** (`pfrest`; Netgate ships it, it is not a separate fork) |
+| REST API package | community **pfSense-pkg-RESTAPI v2.10.2** (`pfrest`; Netgate ships it, it is not a separate fork). v2.11.0 (2026-11-01) is compatible; the package is now end-of-life-bound — see "pfrest end of life" above. |
 | API base path | `/api/v2/` |
 | API port | **non-standard** on this box (`8444`); the GUI/HAProxy is on `443`, and `8443` is an unrelated API. The config flow must take a full base URL including port. |
 | Auth header | `x-api-key: <key>` (schema also offers `BasicAuth` and `JWTAuth`; we use the key) |
@@ -194,8 +268,11 @@ current state of the repo — read it before touching tooling, tests or a releas
 
 1. **Full replacement, REST v2 only.** No XML-RPC fallback; installs without the
    REST API package (or below its minimum) are out of scope for this fork.
-2. **Auth: API key via `x-api-key`.** The config flow's `password` field is
-   replaced by `api_key`. `username` becomes informational or is dropped.
+2. **Auth: API key via `x-api-key` by default** — superseded in part by
+   `v0.10.2` (PR #10): the config flow is now a menu offering API key,
+   username+password (`Authorization: Basic`), or JWT (Bearer minted from
+   `POST /api/v2/auth/jwt`, cached, re-minted once on 401). The entry records
+   `auth_method`; config-entry `VERSION` is 4.
 3. **Native async.** `aiohttp` via
    `homeassistant.helpers.aiohttp_client.async_get_clientsession(hass)`. Rationale:
    the repo already leans this way (`respx` is in `requirements*.txt`), it is the
@@ -581,8 +658,11 @@ today. Original intent, still valid:
 
 - Live box: `https://pfsense.sneakyblueshoes.int:8444/api/v2` — schema at
   `/api/v2/schema/openapi`, Swagger UI at `/api/v2/documentation`.
-- Package: https://github.com/pfrest/pfSense-pkg-RESTAPI (v2.10.2) —
-  docs https://pfrest.org
+- Package: https://github.com/pfrest/pfSense-pkg-RESTAPI (v2.10.2 on the box,
+  v2.11.0 latest) — docs https://pfrest.org — EOL notice: discussion #962
+- Netgate official API: https://github.com/Netgate/pfsense-api
+  (`pfapi_openapi.yml`), docs https://netgate.github.io/pfsense-api
+- Netgate blog feed: https://www.netgate.com/blog/rss.xml
 - GraphQL: `POST /api/v2/graphql`
 - Ansible collection with request/response examples:
   https://github.com/pfrest/ansible-collection-pfsense
