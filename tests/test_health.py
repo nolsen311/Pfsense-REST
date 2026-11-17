@@ -85,6 +85,7 @@ def _client():
         "limit": 1000,
         "used_percent": 10.0,
     }
+    client.get_notices.return_value = {"count": 0, "latest": []}
     return client
 
 

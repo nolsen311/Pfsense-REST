@@ -363,7 +363,30 @@ def test_parse_pf_states() -> None:
 
 async def test_state_table_on_both_backends() -> None:
     """Netgate decodes pfinfo and adds dataset extras; pfrest shells pfctl."""
-    import base64  # noqa: PLC0415
+
+
+def test_parse_notices() -> None:
+    """Notices JSON is parsed; anything else is a ValueError."""
+    from custom_components.pfsense.pypfsense.util import (  # noqa: PLC0415
+        NOTICES_COMMAND,
+        parse_notices,
+    )
+
+    assert NOTICES_COMMAND.startswith("php -r '")
+    out = '{"count":2,"latest":[{"id":1,"category":"c","priority":1,"notice":"n"}]}\n'
+    assert parse_notices(out) == {
+        "count": 2,
+        "latest": [{"id": 1, "category": "c", "priority": 1, "notice": "n"}],
+    }
+    # Leading noise (PHP warnings) before the JSON is tolerated.
+    assert parse_notices('PHP Warning: x\n{"count":0,"latest":[]}')["count"] == 0
+    for bad in ("", "php: not found", '{"latest": []}', "[1]"):
+        with pytest.raises(ValueError):
+            parse_notices(bad)
+
+
+async def test_notices_errors_become_unsupported() -> None:
+    """No shell privilege or no PHP reports unsupported, not a repair."""
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
     from custom_components.pfsense.pypfsense import (  # noqa: PLC0415
@@ -399,3 +422,15 @@ async def test_state_table_on_both_backends() -> None:
     pfrest.exec_command = AsyncMock(side_effect=PfSensePrivilegeError("403"))
     with pytest.raises(PfSenseUnsupportedError):
         await pfrest.get_state_table()
+    for client in (
+        NetgateClient("https://pf.example:8443", object(), username="u", password="p"),
+        PfRestClient("https://pf.example:8444", object(), api_key="k"),
+    ):
+        client.exec_command = AsyncMock(side_effect=PfSensePrivilegeError("403"))
+        with pytest.raises(PfSenseUnsupportedError):
+            await client.get_notices()
+        client.exec_command = AsyncMock(return_value="sh: php: not found")
+        with pytest.raises(PfSenseUnsupportedError):
+            await client.get_notices()
+        client.exec_command = AsyncMock(return_value='{"count": 3, "latest": []}')
+        assert (await client.get_notices())["count"] == 3

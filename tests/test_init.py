@@ -64,6 +64,7 @@ def _full_client_mock():
         "limit": 1000,
         "used_percent": 10.0,
     }
+    client.get_notices.return_value = {"count": 0, "latest": []}
     client.get_arp_table.return_value = []
     return client
 

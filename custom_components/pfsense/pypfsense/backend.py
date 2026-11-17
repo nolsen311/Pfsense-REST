@@ -54,6 +54,9 @@ class PfSenseBackend(Protocol):
     async def get_state_table(self) -> dict:
         """Return ``{"current", "limit", "used_percent", ...}`` for pf states."""
 
+    async def get_notices(self) -> dict:
+        """Return pending pfSense notices: ``{"count", "latest": [...]}``."""
+
     # telemetry
     async def get_telemetry(self) -> dict:
         """Return the nested legacy ``telemetry`` dict the sensors read."""

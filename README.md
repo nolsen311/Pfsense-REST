@@ -162,6 +162,11 @@ want in the entity settings.
 ### Binary sensor
 
 - **CARP Status** – whether CARP is enabled and not in maintenance mode.
+- **Pending Notices Present**: on while pfSense has notices waiting (the web
+  UI's bell icon). The attributes give the count and the newest three. No API
+  endpoint reports notices, so they're read through the shell, which needs a
+  user with shell access. The sensor is unavailable without it, and once
+  Netgate removes PHP from pfSense.
 
 ### Buttons
 
@@ -355,8 +360,9 @@ v3 removes the XML-RPC / `exec_php` transport entirely. On upgrade:
   Home Assistant prompts you for an API key. Entity history is preserved (the
   device unique ID is unchanged).
 - **The URL must include the REST API port.**
-- **Removed – no REST equivalent:** the `exec_php` service; the "Pending Notices
-  Present" binary sensor and the `close_notice` / `file_notice` services.
+- **Removed – no REST equivalent:** the `exec_php` service and the
+  `close_notice` / `file_notice` services. The "Pending Notices Present" binary
+  sensor came back in v0.12 (read through the shell).
 - **`update` entity:** no one-click firmware install on the REST API
   package. On the Netgate API it's an opt-in, experimental option.
 - **Removed sensors – no REST data source:** memory byte figures
