@@ -45,8 +45,8 @@ from .const import (
     UNDO_UPDATE_LISTENER,
 )
 from .pypfsense import (
-    Client as pfSenseClient,
     PfSenseAuthError,
+    PfSenseBackend,
     PfSensePrivilegeError,
     client_from_config,
 )
@@ -319,7 +319,7 @@ class PfSenseData:
     """Fetches and holds the pfSense poll state for a config entry."""
 
     def __init__(
-        self, client: pfSenseClient, config_entry: ConfigEntry, hass: HomeAssistant
+        self, client: PfSenseBackend, config_entry: ConfigEntry, hass: HomeAssistant
     ):
         """Initialize the data object."""
         self._client = client
@@ -507,7 +507,7 @@ class PfSenseEntity(CoordinatorEntity, RestoreEntity):
     def _get_pfsense_state_value(self, path, default=None):
         return dict_get(self.coordinator.data, path, default)
 
-    def _get_pfsense_client(self) -> pfSenseClient:
+    def _get_pfsense_client(self) -> PfSenseBackend:
         return self.hass.data[DOMAIN][self.config_entry.entry_id][PFSENSE_CLIENT]
 
     async def service_start_service(
