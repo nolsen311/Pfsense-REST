@@ -273,6 +273,25 @@ Verified against the live 26.07 box:
   caches the result for 1 h, and it reads about 1 s even with `refresh=true`.
   `/system/firmware` is the **board** firmware (coreboot), not pfSense.
   pfrest still returns `None`, so the entity is unavailable there.
+- **Package updates** (Netgate only):
+  - There is one update entity per add-on package (`package.<internal_name>`),
+    from `GET /system/package/installed`.
+  - Without `remote_check`, `update_available` and `available_version` are
+    empty, but `version` already holds the latest version from pfSense's
+    cached catalog. An update is therefore `version != installed_version`.
+    `remote_check=true` takes ~15 s, too slow for the poll.
+  - The list is cached for 1 h, and re-read every 60 s while an upgrade is
+    pending.
+  - Install: `POST /system/package/install {"packages": [{"name":
+    "pfSense-pkg-<x>"}]}`. **Verified on 2026-11-17** (System_Patches
+    2.3.5_1 → 2.3.6, approved by the user). The call returned in 0.5 s with
+    `{transaction, progress: [{percent: 100, messages: ["__RC=0"], action:
+    "install"}]}`, and `installed_version` changed within 20 s.
+  - pfrest's `/system/packages` 500s even with packages installed, so pfrest
+    raises `PfSenseUnsupportedError` (shown as an unsupported check, not a
+    failure).
+  - Don't use the Nexus package for testing: upgrading it restarts the API
+    itself.
 - **Firmware install (opt-in, UNVERIFIED):**
   - Netgate entries get an Install button only when the option
     `firmware_install_unverified` (`CONF_FIRMWARE_INSTALL_UNVERIFIED`,

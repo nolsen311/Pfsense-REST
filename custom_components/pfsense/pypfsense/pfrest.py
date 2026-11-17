@@ -262,6 +262,22 @@ class PfRestClient:
             "firmware upgrade is not supported by the REST API package backend"
         )
 
+    async def get_installed_packages(self) -> list[dict]:
+        """Not available from the REST API package.
+
+        ``/system/packages`` 500s even with packages installed
+        (``MODELSET_FIRST_REQUESTED_WITH_NO_MODEL_OBJECTS``, seen on v2.10.2).
+        """
+        raise PfSenseUnsupportedError(
+            "package status is not available from the REST API package"
+        )
+
+    async def install_package_update(self, name: str) -> None:
+        """Not available on the REST API package backend."""
+        raise PfSenseUnsupportedError(
+            "package install is not supported by the REST API package backend"
+        )
+
     async def get_dns_servers(self) -> list[str]:
         """Return the configured system DNS servers."""
         data = await self._get("/system/dns")

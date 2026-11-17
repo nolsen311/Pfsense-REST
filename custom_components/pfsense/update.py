@@ -31,6 +31,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # Give up showing "installing" if the version hasn't changed after this long.
 INSTALL_TIMEOUT = 2 * 3600
+PACKAGE_INSTALL_TIMEOUT = 30 * 60
 UNVERIFIED_SUMMARY = (
     "Experimental: installing from Home Assistant has not been verified on "
     "hardware yet. The firewall reboots during the upgrade, and Home Assistant "
@@ -61,6 +62,21 @@ async def async_setup_entry(
             True,
         )
         entities.append(entity)
+
+        entities.extend(
+            PfSensePackageUpdate(
+                config_entry,
+                coordinator,
+                UpdateEntityDescription(
+                    key=f"package.{package['name']}",
+                    name=f"Package {package['name']}",
+                    entity_category=EntityCategory.DIAGNOSTIC,
+                ),
+                True,
+                package["name"],
+            )
+            for package in data_packages(coordinator.data)
+        )
 
         return entities
 
@@ -229,3 +245,104 @@ class PfSenseFirmwareUpdatesAvailableUpdate(PfSenseUpdate):
     def release_url(self):
         """Return the release notes URL."""
         return "https://docs.netgate.com/pfsense/en/latest/releases/index.html"
+
+
+def data_packages(state: dict | None) -> list[dict]:
+    """The poll's package list (empty on backends without it)."""
+    packages = (state or {}).get("packages") or []
+    return [p for p in packages if isinstance(p, dict) and p.get("name")]
+
+
+class PfSensePackageUpdate(PfSenseUpdate):
+    """Update entity for one add-on package (Netgate API)."""
+
+    _installing_from: str | None = None
+    _install_started: float = 0.0
+
+    def __init__(
+        self, config_entry, coordinator, entity_description, enabled_default, name
+    ):
+        """Initialize for package ``name`` (its pfSense internal name)."""
+        super().__init__(config_entry, coordinator, entity_description, enabled_default)
+        self._package_name = name
+
+    @property
+    def _package(self) -> dict | None:
+        return next(
+            (
+                p
+                for p in data_packages(self.coordinator.data)
+                if p["name"] == self._package_name
+            ),
+            None,
+        )
+
+    @property
+    def available(self):
+        """Unavailable once the package is no longer installed."""
+        return self._package is not None and super().available
+
+    @property
+    def title(self):
+        """Return the title."""
+        return self._package_name
+
+    @property
+    def installed_version(self):
+        """Version installed and in use."""
+        return (self._package or {}).get("installed_version")
+
+    @property
+    def latest_version(self):
+        """Latest version in pfSense's package catalog."""
+        return (self._package or {}).get("latest_version")
+
+    @property
+    def supported_features(self) -> UpdateEntityFeature:
+        """Install on the Netgate backend; PROGRESS so HA reads in_progress."""
+        if self.config_entry.data.get(CONF_BACKEND) == BACKEND_NETGATE:
+            return UpdateEntityFeature.INSTALL | UpdateEntityFeature.PROGRESS
+        return UpdateEntityFeature(0)
+
+    @property
+    def in_progress(self):
+        """Installing until the installed version changes (or it times out)."""
+        if self._installing_from is None:
+            return False
+        if (
+            self.installed_version != self._installing_from
+            or time.monotonic() - self._install_started > PACKAGE_INSTALL_TIMEOUT
+        ):
+            self._installing_from = None
+            return False
+        return True
+
+    @property
+    def extra_state_attributes(self):
+        """Package details."""
+        pkg = self._package or {}
+        return {
+            "package": pkg.get("package"),
+            "description": pkg.get("descr"),
+            "category": pkg.get("category"),
+        }
+
+    @property
+    def release_url(self):
+        """No per-package release notes URL."""
+        return None
+
+    async def async_install(
+        self, version: str | None, backup: bool, **kwargs: Any
+    ) -> None:
+        """Upgrade the package to its latest version."""
+        if not self.supported_features & UpdateEntityFeature.INSTALL:
+            raise HomeAssistantError("Package install needs the Netgate API")
+        try:
+            await self._get_pfsense_client().install_package_update(self._package_name)
+        except PfSenseError as err:
+            raise HomeAssistantError(f"Could not upgrade the package: {err}") from err
+        self._installing_from = self.installed_version
+        self._install_started = time.monotonic()
+        self.async_write_ha_state()
+        await self.coordinator.async_request_refresh()

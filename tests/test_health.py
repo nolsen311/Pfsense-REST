@@ -79,6 +79,7 @@ def _client():
     client.get_nat_port_forward_rules.return_value = []
     client.get_nat_outbound_rules.return_value = []
     client.get_firmware_update_info.return_value = None
+    client.get_installed_packages.return_value = []
     return client
 
 

@@ -543,3 +543,40 @@ def test_load_average_from_controller_stats() -> None:
     assert t["system"]["load_average"] == rising
     t = nm.build_telemetry({}, {}, {}, {}, None, {}, {}, {})
     assert t["system"]["load_average"]["one_minute"] is None
+
+
+def test_installed_packages() -> None:
+    """Catalog ``version`` vs ``installed_version`` decides the update flag."""
+    body = {
+        "packages": [
+            {
+                "name": "pfSense-pkg-System_Patches",
+                "internal_name": "System_Patches",
+                "installed_version": "2.3.5_1",
+                "available_version": "",
+                "version": "2.3.6",
+                "update_available": False,
+                "category": "sysutils",
+                "descr": "patches",
+            },
+            {
+                "name": "pfSense-pkg-acme",
+                "internal_name": "acme",
+                "installed_version": "1.3.2",
+                "version": "1.3.2",
+            },
+            {"name": "broken", "installed_version": ""},
+        ]
+    }
+    patches, acme = nm.installed_packages(body)
+    assert patches == {
+        "name": "System_Patches",
+        "package": "pfSense-pkg-System_Patches",
+        "descr": "patches",
+        "category": "sysutils",
+        "installed_version": "2.3.5_1",
+        "latest_version": "2.3.6",
+        "update_available": True,
+    }
+    assert (acme["latest_version"], acme["update_available"]) == ("1.3.2", False)
+    assert nm.installed_packages(None) == []
