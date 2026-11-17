@@ -292,6 +292,19 @@ Verified against the live 26.07 box:
     failure).
   - Don't use the Nexus package for testing: upgrading it restarts the API
     itself.
+- **Pending notices** (both backends):
+  - No API endpoint exposes pfSense's notices, the web UI's bell.
+    `/controller/alarms` holds the Nexus controller's own alarms: 0, while
+    pfSense had 27 notices. `/events` only carries config events.
+  - `util.NOTICES_COMMAND` runs a PHP snippet with pfSense's `notices.inc`
+    through each backend's `exec_command`. It returns `{count, latest}`, the
+    newest 3 trimmed to 120 characters (618 characters for 27 notices, under
+    pfrest's 1024 limit).
+  - A missing shell privilege, a 404, or non-JSON output (no PHP) all become
+    `PfSenseUnsupportedError`. The sensor then goes unavailable, and there's
+    no privilege repair.
+  - The sensor keeps the pre-v3 key `notices.pending_notices_present`.
+  - Verified on both backends on 2026-11-17 (read-only).
 - **Firmware install (opt-in, UNVERIFIED):**
   - Netgate entries get an Install button only when the option
     `firmware_install_unverified` (`CONF_FIRMWARE_INSTALL_UNVERIFIED`,

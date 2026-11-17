@@ -49,8 +49,15 @@ from .errors import (
     PfSenseConnectionError,
     PfSenseNotFoundError,
     PfSensePrivilegeError,
+    PfSenseUnsupportedError,
 )
-from .util import _as_network, _expand_alias_networks, _shq
+from .util import (
+    NOTICES_COMMAND,
+    _as_network,
+    _expand_alias_networks,
+    _shq,
+    parse_notices,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -538,6 +545,20 @@ class NetgateClient:
             )
         self._package_upgrading[name] = pkg["installed_version"]
         self._packages = None
+
+    async def get_notices(self) -> dict:
+        """Pending pfSense notices: ``{"count", "latest": [...]}`` (newest 3).
+
+        Read through the shell with pfSense's PHP ``notices.inc``. Without
+        shell access, or once PHP is gone, this reports unsupported instead
+        of a privilege or API error.
+        """
+        try:
+            return parse_notices(await self.exec_command(NOTICES_COMMAND))
+        except (PfSensePrivilegeError, PfSenseNotFoundError) as err:
+            raise PfSenseUnsupportedError(f"notices need shell access: {err}") from err
+        except ValueError as err:
+            raise PfSenseUnsupportedError(f"notices unavailable: {err}") from err
 
     async def get_dns_servers(self) -> list[str]:
         """System DNS servers from ``/system/setup``."""
