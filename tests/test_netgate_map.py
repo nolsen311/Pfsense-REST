@@ -582,6 +582,92 @@ def test_installed_packages() -> None:
     assert nm.installed_packages(None) == []
 
 
+_DYNDNS_BODY = {
+    "dyndnses": [
+        {
+            "id": "0",
+            "enable": True,
+            "type": "cloudflare",
+            "interface": "wan",
+            "host": "@",
+            "domainname": "example.com",
+            "username": "USER",
+            "password": "SECRET",
+            "updateurl": "https://x/?token=TOKEN",
+            "descr": "",
+            "status": "",
+            "ip": "",
+        },
+        {
+            "id": "1",
+            "enable": False,
+            "type": "noip",
+            "interface": "opt1",
+            "host": "me.ddns.net",
+        },
+        {"id": "", "type": "noip"},
+    ]
+}
+
+
+def test_dyndns_entries_drop_credentials():
+    """Entries keep identity fields only; host.domain for domain providers."""
+    entries = nm.dyndns_entries(_DYNDNS_BODY)
+    assert [e["hostname"] for e in entries] == ["@.example.com", "me.ddns.net"]
+    assert entries[1]["enabled"] is False
+    flat = repr(entries)
+    assert "SECRET" not in flat and "USER" not in flat and "TOKEN" not in flat
+    # pfSense builds the cache name with escapeshellarg around the host.
+    assert (
+        nm.dyndns_cache_file(entries[0])
+        == "/conf/dyndns_wancloudflare'@.example.com'0.cache"
+    )
+    assert nm.parse_dyndns_cache("203.0.113.7|1793001661\n") == (
+        "203.0.113.7",
+        1793001661,
+    )
+    assert nm.parse_dyndns_cache("") == (None, None)
+    assert nm.parse_dyndns_cache("2001:db8::1|bad") == ("2001:db8::1", None)
+
+
+async def test_get_dyndns_reads_cache_files():
+    """One shell call reads every entry's caches; no shell still lists entries."""
+    from unittest.mock import AsyncMock  # noqa: PLC0415
+
+    from custom_components.pfsense.pypfsense import (  # noqa: PLC0415
+        NetgateClient,
+        PfSensePrivilegeError,
+    )
+
+    client = NetgateClient(
+        "https://pf.example:8443", object(), username="u", password="p"
+    )
+    client._get = AsyncMock(return_value=_DYNDNS_BODY)
+    client.exec_command = AsyncMock(
+        return_value="0\t203.0.113.7|1793001661\t2001:db8::1|1784567585\n1\t\t\n"
+    )
+    first, second = await client.get_dyndns()
+    command = client.exec_command.await_args.args[0]
+    assert "'/conf/dyndns_wancloudflare'\\''@.example.com'\\''0.cache'" in command
+    assert "0_v6.cache" in command
+    assert (first["ip"], first["ipv6"], first["last_update"]) == (
+        "203.0.113.7",
+        "2001:db8::1",
+        1793001661,
+    )
+    assert first["cache_readable"] is True
+    assert second["ip"] is None and second["last_update"] is None
+    # Cached for 5 minutes.
+    await client.get_dyndns()
+    assert client._get.await_count == 1
+
+    client._dyndns = None
+    client.exec_command = AsyncMock(side_effect=PfSensePrivilegeError("no shell"))
+    entries = await client.get_dyndns()
+    assert len(entries) == 2
+    assert entries[0]["ip"] is None and entries[0]["cache_readable"] is False
+
+
 def test_ntp_status():
     """The selected peer gives offset/stratum; the pool placeholder is skipped."""
     body = {
