@@ -67,6 +67,11 @@ def _full_client_mock():
         "stratum": 2,
         "peers": [],
     }
+    client.get_state_table.return_value = {
+        "current": 100,
+        "limit": 1000,
+        "used_percent": 10.0,
+    }
     client.get_notices.return_value = {"count": 0, "latest": []}
     client.get_arp_table.return_value = []
     return client
@@ -478,4 +483,24 @@ async def test_ntp_unavailable_when_unsupported(hass: HomeAssistant):
     await _setup(hass, entry, client)
     synced = hass.states.get("binary_sensor.router_local_ntp_synchronized")
     assert synced.state == "unavailable"
+
+
+async def test_state_table_sensors(hass: HomeAssistant):
+    """Entries and usage sensors, with the dataset extras as attributes."""
+    client = _full_client_mock()
+    client.get_state_table.return_value = {
+        "current": 2126,
+        "limit": 805000,
+        "used_percent": 0.26,
+        "nat_states": 373.6,
+        "source_ips": None,
+        "destination_ips": 200.5,
+    }
+    entry = _netgate_entry()
+    await _setup(hass, entry, client)
+    entries = hass.states.get("sensor.router_local_state_table_entries")
+    assert entries.state == "2126"
+    assert entries.attributes["nat_states"] == 373.6
+    assert "source_ips" not in entries.attributes
+    assert hass.states.get("sensor.router_local_state_table_usage").state == "0.26"
     assert await hass.config_entries.async_unload(entry.entry_id)

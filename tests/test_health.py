@@ -88,6 +88,11 @@ def _client():
         "stratum": 2,
         "peers": [],
     }
+    client.get_state_table.return_value = {
+        "current": 100,
+        "limit": 1000,
+        "used_percent": 10.0,
+    }
     client.get_notices.return_value = {"count": 0, "latest": []}
     return client
 

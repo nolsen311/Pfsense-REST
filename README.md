@@ -143,6 +143,11 @@ want in the entity settings.
 - **NTP** (Netgate API): **NTP Synchronized** (binary sensor: on while ntpd
   has selected a peer), **NTP Offset** (ms, with the selected peer's address,
   delay and jitter as attributes) and **NTP Stratum** (disabled by default).
+
+- **State table:** current entries, usage % of the limit, and the limit. On
+  the Netgate API, the entries sensor's attributes add NAT states and source
+  and destination IP counts. On the REST API package the values come from
+  `pfctl` through the command endpoint, which needs that privilege.
 - **Per interface:** link status, in/out byte and packet counters (passed
   traffic) plus their kB/s and packets/s rates, interface errors, collisions.
 - **Per gateway:** status, RTT delay, jitter (stddev), packet loss %.
@@ -366,8 +371,8 @@ v3 removes the XML-RPC / `exec_php` transport entirely. On upgrade:
   package. On the Netgate API it's an opt-in, experimental option.
 - **Removed sensors – no REST data source:** memory byte figures
   (physmem/usermem/realmem/swap totals), CPU frequency, per-filesystem usage,
-  system boot time, per-interface *blocked*-traffic counters, pf state-table
-  gauges, and pfBlockerNG block counts.
+  system boot time, per-interface *blocked*-traffic counters, and pfBlockerNG
+  block counts. (The pf state-table sensors came back in v0.12.)
 - **`system_reboot`** no longer supports the `fsck` / `reroot` modes.
 
 ---

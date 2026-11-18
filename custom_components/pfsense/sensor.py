@@ -64,6 +64,8 @@ async def async_setup_entry(  # noqa: C901 - flat per-telemetry-type entity buil
                 "dhcp_stats.leases.online",
                 "telemetry.wan_ip",
                 "ntp.offset_ms",
+                "state_table.current",
+                "state_table.used_percent",
             ]
 
             entity = PfSenseStaticKeySensor(
@@ -365,6 +367,11 @@ class PfSenseStaticKeySensor(PfSenseSensor):
                 delay_ms=peer.get("delay_ms"),
                 jitter_ms=peer.get("jitter_ms"),
             )
+        if self.entity_description.key == "state_table.current":
+            for key in ("nat_states", "source_ips", "destination_ips"):
+                value = dict_get(state, f"state_table.{key}")
+                if value is not None:
+                    attrs[key] = value
 
         if self.entity_description.key == "telemetry.wan_ip":
             attrs["dns_servers"] = dict_get(state, "dns_servers", [])

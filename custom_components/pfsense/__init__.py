@@ -377,6 +377,7 @@ _POLL_READS = (
     ("nat", "nat_outbound_rules", "get_nat_outbound_rules", []),
     ("firmware", "firmware_update_info", "get_firmware_update_info", None),
     ("packages", "packages", "get_installed_packages", []),
+    ("state_table", "state_table", "get_state_table", None),
     ("notices", "notices", "get_notices", None),
     ("ntp", "ntp", "get_ntp_status", None),
 )
