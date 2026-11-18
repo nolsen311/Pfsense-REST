@@ -173,6 +173,7 @@ class NetgateClient:
         self._upgrade_from: str | None = None
         self._packages: tuple[float, list[dict]] | None = None
         self._dyndns: tuple[float, list[dict]] | None = None
+        self._certificates: tuple[float, list[dict]] | None = None
         self._package_upgrading: dict[str, str] = {}
 
     # ---------------------------------------------------------------- http
@@ -607,6 +608,15 @@ class NetgateClient:
             )
         self._dyndns = (now, entries)
         return entries
+
+    async def get_certificates(self) -> list[dict]:
+        """In-use and server certificates with their expiry, cached for an hour."""
+        now = time.monotonic()
+        if self._certificates and now - self._certificates[0] < UPDATE_INFO_TTL:
+            return self._certificates[1]
+        certs = netgate_map.certificates(await self._get("/system/certificates"))
+        self._certificates = (now, certs)
+        return certs
 
     async def get_state_table(self) -> dict:
         """State-table size and limit (``/diag/pfinfo``), no shell needed.

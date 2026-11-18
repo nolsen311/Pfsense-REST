@@ -288,6 +288,12 @@ class PfRestClient:
             "dynamic DNS status is only available on the Netgate API backend"
         )
 
+    async def get_certificates(self) -> list[dict]:
+        """Not implemented for the REST API package backend."""
+        raise PfSenseUnsupportedError(
+            "certificate expiry is only available on the Netgate API backend"
+        )
+
     async def get_state_table(self) -> dict:
         """State-table size and limit, from ``pfctl`` via ``command_prompt``."""
         try:

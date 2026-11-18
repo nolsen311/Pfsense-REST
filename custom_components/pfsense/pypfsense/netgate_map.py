@@ -12,6 +12,7 @@ lost to a consumer that wants it.
 
 from __future__ import annotations
 
+from datetime import datetime
 import math
 import re
 from typing import Any
@@ -534,3 +535,44 @@ def parse_dyndns_cache(text: str) -> tuple[str | None, int | None]:
     except ValueError:
         when = None
     return ip, when
+
+
+def _cert_time(value: Any) -> str | None:
+    """``"2027-01-18 09:17:33 +0000 UTC"`` → ISO 8601, or ``None``."""
+    text = str(value or "").strip().removesuffix(" UTC").strip()
+    if not text:
+        return None
+    try:
+        return datetime.strptime(text, "%Y-%m-%d %H:%M:%S %z").isoformat()
+    except ValueError:
+        return None
+
+
+def certificates(body: Any) -> list[dict]:
+    """``/system/certificates`` → in-use and server certificates, safe fields only.
+
+    The API returns each certificate's private key (``prv``), CSR and body;
+    none of that is copied. Client/user certificates (VPN users and the like)
+    are skipped. ``in_use`` is pfSense's usage label (e.g. "DNS Resolver").
+    """
+    out = []
+    for cert in _items(body, "certs"):
+        in_use = cert.get("inuse") or None
+        if not cert.get("refid") or not (in_use or cert.get("type") == "server"):
+            continue
+        expires = _cert_time(cert.get("ends"))
+        if expires is None:
+            continue
+        out.append(
+            {
+                "refid": cert["refid"],
+                "name": cert.get("descr") or cert["refid"],
+                "type": cert.get("type") or None,
+                "in_use": in_use,
+                "starts": _cert_time(cert.get("starts")),
+                "expires": expires,
+                "issuer": cert.get("issuer") or None,
+                "can_renew": bool(cert.get("can_renew")),
+            }
+        )
+    return out

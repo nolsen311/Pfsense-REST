@@ -205,6 +205,14 @@ want in the entity settings.
   so it needs a user with shell access. Without it the sensor has no value. It
   is read every 5 minutes. Credentials are never read into Home Assistant.
 
+- **Certificate \<name\> Expires** (Netgate API, diagnostic): when each
+  certificate expires, with `days_left`, what uses it, and the issuer as
+  attributes. There's one per in-use or server certificate; ones nothing uses
+  start disabled. A **Certificate expiring** repair appears when an in-use
+  certificate is within 14 days of expiry, and clears itself once it's
+  renewed. The list is read once an hour. Private keys are never read into
+  Home Assistant.
+
 ### Health (diagnostic)
 
 Shown under the device's **Diagnostic** section, and they stay available while

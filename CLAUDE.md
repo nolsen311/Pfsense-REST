@@ -292,6 +292,21 @@ Verified against the live 26.07 box:
     failure).
   - Don't use the Nexus package for testing: upgrading it restarts the API
     itself.
+- **Certificates** (Netgate only):
+  - `GET /system/certificates` (`certs`, ~2.2 s, cached for 1 h) returns
+    every certificate **including its private key (`prv`)**, CSR and body.
+    `netgate_map.certificates` copies only refid, name, type, `in_use`
+    (pfSense's usage label, e.g. "DNS Resolver"), starts, expires, issuer and
+    can_renew. Never add `prv`/`crt`/`csr` to the state, because diagnostics
+    and attributes would carry them.
+  - `ends` looks like `"2027-01-18 09:17:33 +0000 UTC"`.
+  - Kept: certificates that are in use or of type server. Client/user certs
+    (VPN users) are skipped. The live box has 35 certificates; 8 were kept,
+    2 of them in use.
+  - The `certificate_expiring` repair is a warning that counts **in-use
+    certs only**, within `CERT_EXPIRY_WARNING_DAYS` (14) or already expired.
+  - pfrest: unsupported.
+
 - **State table** (both backends):
   - `get_state_table()` returns `{current, limit, used_percent}` from
     `pfctl -si` / `-sm` text (`util.parse_pf_states`; the State Table's
