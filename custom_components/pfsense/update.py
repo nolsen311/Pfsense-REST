@@ -182,7 +182,11 @@ class PfSenseFirmwareUpdatesAvailableUpdate(PfSenseUpdate):
             # PROGRESS makes HA use ``in_progress`` below; without it, HA only
             # shows "installing" while ``async_install`` runs, which returns
             # as soon as the upgrade has started. No percentage is reported.
-            return UpdateEntityFeature.INSTALL | UpdateEntityFeature.PROGRESS
+            return (
+                UpdateEntityFeature.INSTALL
+                | UpdateEntityFeature.PROGRESS
+                | UpdateEntityFeature.BACKUP
+            )
         return UpdateEntityFeature(0)
 
     @property
@@ -216,6 +220,8 @@ class PfSenseFirmwareUpdatesAvailableUpdate(PfSenseUpdate):
             self.installed_version,
             self.config_entry.title,
         )
+        if backup:
+            await _snapshot_before_install(self._get_pfsense_client())
         try:
             await self._get_pfsense_client().start_firmware_update()
         except PfSenseError as err:
@@ -245,6 +251,17 @@ class PfSenseFirmwareUpdatesAvailableUpdate(PfSenseUpdate):
     def release_url(self):
         """Return the release notes URL."""
         return "https://docs.netgate.com/pfsense/en/latest/releases/index.html"
+
+
+async def _snapshot_before_install(client) -> None:
+    """Take a boot environment snapshot ("back up first"); abort if it fails."""
+    try:
+        name = await client.create_boot_environment()
+    except PfSenseError as err:
+        raise HomeAssistantError(
+            f"Could not create a boot environment, so nothing was installed: {err}"
+        ) from err
+    _LOGGER.info("Created boot environment %s before installing", name)
 
 
 def data_packages(state: dict | None) -> list[dict]:
@@ -301,7 +318,11 @@ class PfSensePackageUpdate(PfSenseUpdate):
     def supported_features(self) -> UpdateEntityFeature:
         """Install on the Netgate backend; PROGRESS so HA reads in_progress."""
         if self.config_entry.data.get(CONF_BACKEND) == BACKEND_NETGATE:
-            return UpdateEntityFeature.INSTALL | UpdateEntityFeature.PROGRESS
+            return (
+                UpdateEntityFeature.INSTALL
+                | UpdateEntityFeature.PROGRESS
+                | UpdateEntityFeature.BACKUP
+            )
         return UpdateEntityFeature(0)
 
     @property
@@ -338,6 +359,8 @@ class PfSensePackageUpdate(PfSenseUpdate):
         """Upgrade the package to its latest version."""
         if not self.supported_features & UpdateEntityFeature.INSTALL:
             raise HomeAssistantError("Package install needs the Netgate API")
+        if backup:
+            await _snapshot_before_install(self._get_pfsense_client())
         try:
             await self._get_pfsense_client().install_package_update(self._package_name)
         except PfSenseError as err:

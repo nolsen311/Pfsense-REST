@@ -366,6 +366,19 @@ Verified against the live 26.07 box:
     offset/stratum (`None` when nothing is selected).
   - pfrest: unsupported, so the sync sensor is unavailable.
   - Verified live (read-only) on 2026-11-17: stratum 2, +3.704 ms.
+- **Boot environments** (Netgate only):
+  - `GET /system/bootenv` returns `{envs: {<name>: {...}}}`. `creation` is a
+    unix time string (`creation_nice` is the box's local time), `used` is
+    bytes as a string, and `descr` is `"-"` when unset. Cached for 5 min.
+  - `POST /system/bootenv/quick {}` **verified 2026-11-17** (approved):
+    returned `{"name": "quick-20261117165509"}` in 6 s, a 24 KB clone of the
+    running 26.07, and didn't change active/next boot.
+    `DELETE /system/bootenv/{name}` returned `{"result": "deleted
+    success"}`. The test environment was deleted, so the box is as before.
+  - Firmware and package update entities declare `BACKUP`. `backup: true`
+    snapshots first, and if the snapshot fails the install is aborted
+    (`_snapshot_before_install`).
+  - pfrest: unsupported.
 - **Firmware install (opt-in, UNVERIFIED):**
   - Netgate entries get an Install button only when the option
     `firmware_install_unverified` (`CONF_FIRMWARE_INSTALL_UNVERIFIED`,

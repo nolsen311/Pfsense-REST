@@ -282,6 +282,18 @@ class PfRestClient:
             "package install is not supported by the REST API package backend"
         )
 
+    async def get_boot_environments(self) -> list[dict]:
+        """Not implemented for the REST API package backend."""
+        raise PfSenseUnsupportedError(
+            "boot environments are only available on the Netgate API backend"
+        )
+
+    async def create_boot_environment(self) -> str | None:
+        """Not implemented for the REST API package backend."""
+        raise PfSenseUnsupportedError(
+            "boot environments are only available on the Netgate API backend"
+        )
+
     async def get_dyndns(self) -> list[dict]:
         """Not implemented for the REST API package backend."""
         raise PfSenseUnsupportedError(

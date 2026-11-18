@@ -320,6 +320,21 @@ async def async_setup_entry(  # noqa: C901 - flat per-telemetry-type entity buil
             for cert in dict_get(state, "certificates", None) or []
         )
 
+        if dict_get(state, "boot_environments", None):
+            entities.append(
+                PfSenseBootEnvironmentSensor(
+                    config_entry,
+                    coordinator,
+                    SensorEntityDescription(
+                        key="boot_environments.active",
+                        name="Boot Environment",
+                        icon="mdi:harddisk-plus",
+                        entity_category=EntityCategory.DIAGNOSTIC,
+                    ),
+                    True,
+                )
+            )
+
         entities.extend(build_health_sensors(config_entry, coordinator))
         return entities
 
@@ -806,4 +821,36 @@ class PfSenseCertificateSensor(PfSenseSensor):
             "issuer": cert.get("issuer"),
             "starts": cert.get("starts"),
             "can_renew": cert.get("can_renew"),
+        }
+
+
+class PfSenseBootEnvironmentSensor(PfSenseSensor):
+    """The boot environment pfSense is running, with all of them as attributes."""
+
+    def _envs(self) -> list[dict]:
+        return (self.coordinator.data or {}).get("boot_environments") or []
+
+    @property
+    def native_value(self):
+        """Name of the active boot environment."""
+        active = next((e for e in self._envs() if e.get("active")), None)
+        return active["name"] if active else None
+
+    @property
+    def extra_state_attributes(self):
+        """Active version, next boot, and every environment."""
+        envs = self._envs()
+        active = next((e for e in envs if e.get("active")), {})
+        nxt = next((e for e in envs if e.get("next_boot")), {})
+        return {
+            "version": active.get("version"),
+            "next_boot": nxt.get("name"),
+            "count": len(envs),
+            "environments": [
+                {
+                    k: e.get(k)
+                    for k in ("name", "version", "created", "used_bytes", "protected")
+                }
+                for e in envs
+            ],
         }

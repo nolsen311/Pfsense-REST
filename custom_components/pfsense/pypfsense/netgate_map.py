@@ -12,7 +12,7 @@ lost to a consumer that wants it.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 import math
 import re
 from typing import Any
@@ -623,4 +623,42 @@ def certificates(body: Any) -> list[dict]:
                 "can_renew": bool(cert.get("can_renew")),
             }
         )
+    return out
+
+
+def boot_environments(body: Any) -> list[dict]:
+    """``/system/bootenv`` → boot environments, newest first.
+
+    ``envs`` is keyed by name. ``creation`` is a unix time as a string,
+    ``used`` bytes as a string, and ``descr`` is ``"-"`` when unset.
+    """
+    envs = body.get("envs") if isinstance(body, dict) else None
+    out = []
+    for key, env in (envs or {}).items() if isinstance(envs, dict) else []:
+        if not isinstance(env, dict):
+            continue
+        try:
+            created = datetime.fromtimestamp(int(env.get("creation")), UTC).isoformat()
+        except (TypeError, ValueError):
+            created = None
+        try:
+            used = int(env.get("used"))
+        except (TypeError, ValueError):
+            used = None
+        descr = env.get("descr")
+        out.append(
+            {
+                "name": env.get("name") or key,
+                "version": env.get("version") or None,
+                "active": bool(env.get("active")),
+                "next_boot": bool(env.get("nextboot")),
+                "created": created,
+                "last_booted": env.get("lastbooted_nice") or None,
+                "used_bytes": used,
+                "protected": bool(env.get("protect")),
+                "description": descr if descr and descr != "-" else None,
+                "failed": bool(env.get("failed")),
+            }
+        )
+    out.sort(key=lambda e: e["created"] or "", reverse=True)
     return out
