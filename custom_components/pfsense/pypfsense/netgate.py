@@ -601,9 +601,11 @@ class NetgateClient:
     async def remove_package(self, package: str) -> None:
         """Uninstall a package by its full name (``pfSense-pkg-<name>``).
 
-        ``DELETE /system/package/name/{name}``; it returns the removal's
-        progress. pfSense keeps the package's settings in config.xml, so a
-        reinstall picks them up again.
+        ``DELETE /system/package/name/{name}`` takes the full name and
+        returns ``{transaction: "<pkg>-delete", progress}`` at once; the
+        package leaves the installed list ~10 s later (verified 2026-11-17
+        with pfSense-pkg-nut). pfSense keeps the package's settings in
+        config.xml, so a reinstall picks them up again.
         """
         async with self._write_lock:
             await self._request(

@@ -225,6 +225,28 @@ want in the entity settings.
   before upgrading, so a bad upgrade can be rolled back from the console or
   GUI. If the snapshot fails, nothing is installed.
 
+- **Safe firmware upgrade** (Netgate API, opt-in under Configure, needs the
+  firmware install option): Install then follows
+  [Netgate's upgrade advice](https://docs.netgate.com/pfsense/en/latest/install/upgrade-guide-prepare.html):
+  1. take a boot environment snapshot;
+  2. save an **encrypted** config backup (Backup Area: All) in Home
+     Assistant's `pfsense_backups/` folder, using a password you set in
+     Configure;
+  3. remove the add-on packages, except a keep list (default `Nexus,
+     Netgate_Firmware_Upgrade`; Nexus is always kept, because it's the API
+     Home Assistant uses);
+  4. upgrade, during which the firewall reboots;
+  5. reinstall the packages once the new version is running. Their settings
+     stay in the config.
+
+  The entity shows each stage in its `safe_upgrade_*` attributes. If a step
+  before the upgrade fails, the firmware isn't touched and any removed
+  packages are reinstalled. If the upgrade itself fails, or there's no new
+  version after 2 hours, the packages stay removed and a repair lists them
+  together with the snapshot and backup. It clears itself once they're
+  reinstalled. Restore the backup in Diagnostics › Backup & Restore, with
+  the password.
+
 ### Health (diagnostic)
 
 Shown under the device's **Diagnostic** section, and they stay available while

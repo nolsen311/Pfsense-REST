@@ -379,6 +379,32 @@ Verified against the live 26.07 box:
     snapshots first, and if the snapshot fails the install is aborted
     (`_snapshot_before_install`).
   - pfrest: unsupported.
+- **Safe firmware upgrade** (`safe_upgrade.py`, Netgate only; options
+  `firmware_safe_upgrade`, `firmware_backup_password` (redacted in
+  diagnostics) and `firmware_keep_packages`):
+  - Install runs `SafeUpgrade.async_start` in an entry background task:
+    snapshot → `POST /diag/backup {area:"", norrd, enc, pwd}` → remove
+    packages → `start_firmware_update` → (coordinator sees the new
+    `installed_version`) → reinstall.
+  - The plan is in `Store` `pfsense.safe_upgrade.<entry_id>` and saved after
+    every step. On load, a plan cut off before the upgrade counts as failed,
+    and `reinstalling` resumes.
+  - **`Nexus` is always kept**: removing it kills the API mid-sequence.
+    `ALWAYS_KEEP_PACKAGES`.
+  - Failure before the upgrade: reinstall the removed packages, don't upgrade,
+    and raise a repair (`packages_back`, so a retry is allowed). Failure or a
+    2 h timeout after the upgrade started: leave the packages removed (the
+    user's choice) and raise `safe_upgrade_incomplete`. That clears itself
+    when the poll's package list contains them all again.
+  - Verified pieces (2026-11-17, approved):
+    - The encrypted backup: 903 KB in 1.3 s, starting `---- BEGIN
+      config.xml ----`, with no plaintext.
+    - Install then remove of `pfSense-pkg-nut`: listed 31 s after install,
+      gone 9 s after `DELETE /system/package/name/pfSense-pkg-nut` (full
+      name).
+    - The whole sequence runs only on a real upgrade, so it's still
+      unverified like the firmware install. `_http(raw=True)` returns bytes
+      for 2xx responses.
 - **Firmware install (opt-in, UNVERIFIED):**
   - Netgate entries get an Install button only when the option
     `firmware_install_unverified` (`CONF_FIRMWARE_INSTALL_UNVERIFIED`,
