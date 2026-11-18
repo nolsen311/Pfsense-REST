@@ -506,7 +506,9 @@ class NetgateClient:
         installed = ((info or {}).get("base") or {}).get("installed_version")
         branch = body.get("firmware_branch") or installed
         if not branch:
-            raise PfSenseAPIError("cannot determine the firmware branch to upgrade")
+            raise PfSenseAPIError(
+                0, "", "cannot determine the firmware branch to upgrade"
+            )
         async with self._write_lock:
             with contextlib.suppress(PfSenseConnectionError):
                 await self._request(
@@ -572,7 +574,7 @@ class NetgateClient:
                 _b64_text(info.get("info")), _b64_text(info.get("memory"))
             )
         except ValueError as err:
-            raise PfSenseAPIError(f"unexpected pfinfo: {err}") from err
+            raise PfSenseAPIError(0, "", f"unexpected pfinfo: {err}") from err
         dataset = dataset or {}
         table["nat_states"] = dataset.get("pfnat")
         table["source_ips"] = dataset.get("srcip")

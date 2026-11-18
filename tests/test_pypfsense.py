@@ -434,3 +434,23 @@ async def test_notices_errors_become_unsupported() -> None:
             await client.get_notices()
         client.exec_command = AsyncMock(return_value='{"count": 3, "latest": []}')
         assert (await client.get_notices())["count"] == 3
+
+
+async def test_netgate_state_table_bad_pfinfo() -> None:
+    """Unparseable pfinfo raises PfSenseAPIError (not a TypeError)."""
+    from unittest.mock import AsyncMock  # noqa: PLC0415
+
+    from custom_components.pfsense.pypfsense import (  # noqa: PLC0415
+        NetgateClient,
+        PfSenseAPIError,
+    )
+
+    netgate = NetgateClient(
+        "https://pf.example:8443", object(), username="u", password="p"
+    )
+    netgate._get = AsyncMock(
+        return_value={"pfinfo": {"info": "bm90aGluZw==", "memory": ""}}
+    )
+    netgate._monitoring = AsyncMock(return_value={})
+    with pytest.raises(PfSenseAPIError, match="unexpected pfinfo"):
+        await netgate.get_state_table()
