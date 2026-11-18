@@ -140,6 +140,10 @@ want in the entity settings.
   15-minute load averages are worked out from per-minute samples. Disk usage
   has no Netgate API source.
 - **DHCP:** total leases, online leases, idle/offline leases.
+- **NTP** (Netgate API): **NTP Synchronized** (binary sensor: on while ntpd
+  has selected a peer), **NTP Offset** (ms, with the selected peer's address,
+  delay and jitter as attributes) and **NTP Stratum** (disabled by default).
+
 - **State table:** current entries, usage % of the limit, and the limit. On
   the Netgate API, the entries sensor's attributes add NAT states and source
   and destination IP counts. On the REST API package the values come from

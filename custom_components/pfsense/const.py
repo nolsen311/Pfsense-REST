@@ -114,6 +114,19 @@ SENSOR_TYPES: Final[dict[str, SensorEntityDescription]] = {
         icon=ICON_MEMORY,
         state_class=SensorStateClass.MEASUREMENT,
     ),
+    "ntp.offset_ms": SensorEntityDescription(
+        key="ntp.offset_ms",
+        name="NTP Offset",
+        native_unit_of_measurement=UnitOfTime.MILLISECONDS,
+        icon="mdi:clock-check-outline",
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    "ntp.stratum": SensorEntityDescription(
+        key="ntp.stratum",
+        name="NTP Stratum",
+        icon="mdi:clock-check-outline",
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
     "state_table.current": SensorEntityDescription(
         key="state_table.current",
         name="State Table Entries",

@@ -60,6 +60,14 @@ def _full_client_mock():
     client.get_firmware_update_info.return_value = None
     client.get_installed_packages.return_value = []
     client.get_dyndns.return_value = []
+    client.get_ntp_status.return_value = {
+        "enabled": True,
+        "synchronized": True,
+        "peer": None,
+        "offset_ms": 1.0,
+        "stratum": 2,
+        "peers": [],
+    }
     client.get_certificates.return_value = []
     client.get_state_table.return_value = {
         "current": 100,
@@ -456,6 +464,54 @@ async def test_dyndns_sensor(hass: HomeAssistant):
     assert state.attributes["ipv6"] == "2001:db8::1"
     assert state.attributes["last_update"].startswith("2026-")
     assert "password" not in state.attributes
+
+
+async def test_ntp_entities(hass: HomeAssistant):
+    """NTP sync binary sensor plus offset (with peer attributes) and stratum."""
+    client = _full_client_mock()
+    peer = {
+        "server": "192.0.2.20",
+        "status": "Active Peer",
+        "refid": "17.253.4.37",
+        "stratum": 2,
+        "offset_ms": 3.704,
+        "delay_ms": 29.716,
+        "jitter_ms": 1.009,
+        "reach": "377",
+    }
+    client.get_ntp_status.return_value = {
+        "enabled": True,
+        "synchronized": True,
+        "peer": peer,
+        "offset_ms": 3.704,
+        "stratum": 2,
+        "peers": [peer],
+    }
+    entry = _netgate_entry()
+    await _setup(hass, entry, client)
+    synced = hass.states.get("binary_sensor.router_local_ntp_synchronized")
+    assert synced.state == "on"
+    assert synced.attributes["peer"] == "192.0.2.20"
+    offset = hass.states.get("sensor.router_local_ntp_offset")
+    assert offset.state == "3.704"
+    assert offset.attributes["peer_server"] == "192.0.2.20"
+    assert offset.attributes["jitter_ms"] == 1.009
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.asyncio
+async def test_ntp_unavailable_when_unsupported(hass: HomeAssistant):
+    """Without NTP status (pfrest), the sync sensor is unavailable, not off."""
+    from custom_components.pfsense.pypfsense import (  # noqa: PLC0415
+        PfSenseUnsupportedError,
+    )
+
+    client = _full_client_mock()
+    client.get_ntp_status.side_effect = PfSenseUnsupportedError("pfrest")
+    entry = _netgate_entry()
+    await _setup(hass, entry, client)
+    synced = hass.states.get("binary_sensor.router_local_ntp_synchronized")
+    assert synced.state == "unavailable"
 
 
 async def test_certificate_sensor_and_repair(hass: HomeAssistant):

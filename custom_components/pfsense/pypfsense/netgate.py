@@ -618,6 +618,10 @@ class NetgateClient:
         self._certificates = (now, certs)
         return certs
 
+    async def get_ntp_status(self) -> dict:
+        """NTP sync state, selected peer, offset and stratum."""
+        return netgate_map.ntp_status(await self._get("/services/ntp/status"))
+
     async def get_state_table(self) -> dict:
         """State-table size and limit (``/diag/pfinfo``), no shell needed.
 

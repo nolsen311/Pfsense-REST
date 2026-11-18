@@ -288,6 +288,12 @@ class PfRestClient:
             "dynamic DNS status is only available on the Netgate API backend"
         )
 
+    async def get_ntp_status(self) -> dict:
+        """Not implemented for the REST API package backend."""
+        raise PfSenseUnsupportedError(
+            "NTP status is only available on the Netgate API backend"
+        )
+
     async def get_certificates(self) -> list[dict]:
         """Not implemented for the REST API package backend."""
         raise PfSenseUnsupportedError(

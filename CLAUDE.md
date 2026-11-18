@@ -320,7 +320,6 @@ Verified against the live 26.07 box:
     privilege reports unsupported.
   - Verified live on both backends on 2026-11-17: ~1,950 states, a limit of
     805,000.
-
 - **Pending notices** (both backends):
   - No API endpoint exposes pfSense's notices, the web UI's bell.
     `/controller/alarms` holds the Nexus controller's own alarms: 0, while
@@ -356,6 +355,17 @@ Verified against the live 26.07 box:
   - pfrest: unsupported.
   - Verified live (read-only) on 2026-11-17: one Cloudflare entry, IPv4 from
     2026-10-26.
+- **NTP** (Netgate only):
+  - `GET /services/ntp/status` gives `{enabled, query_enabled, servers}`.
+    Each server is ntpq's peer line **as strings** (`offset "+3.704"` in ms,
+    `stratum "2"`), with pfSense's tally label in `status`.
+  - "Active Peer" or "PPS Peer" means selected. The others are
+    Candidate/Outlier/False Ticker/Excess/Backup/Unreach.
+  - The `.POOL.` placeholder row (stratum 16) is dropped.
+  - `netgate_map.ntp_status` returns synchronized, the selected peer, and
+    offset/stratum (`None` when nothing is selected).
+  - pfrest: unsupported, so the sync sensor is unavailable.
+  - Verified live (read-only) on 2026-11-17: stratum 2, +3.704 ms.
 - **Firmware install (opt-in, UNVERIFIED):**
   - Netgate entries get an Install button only when the option
     `firmware_install_unverified` (`CONF_FIRMWARE_INSTALL_UNVERIFIED`,

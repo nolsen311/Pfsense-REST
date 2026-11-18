@@ -462,6 +462,19 @@ async def test_pfrest_dyndns_is_unsupported() -> None:
         ).get_dyndns()
 
 
+async def test_pfrest_ntp_is_unsupported() -> None:
+    """Pfrest reports NTP status as unsupported."""
+    from custom_components.pfsense.pypfsense import (  # noqa: PLC0415
+        PfRestClient,
+        PfSenseUnsupportedError,
+    )
+
+    with pytest.raises(PfSenseUnsupportedError):
+        await PfRestClient(
+            "https://pf.example:8444", object(), api_key="k"
+        ).get_ntp_status()
+
+
 async def test_netgate_state_table_bad_pfinfo() -> None:
     """Unparseable pfinfo raises PfSenseAPIError (not a TypeError)."""
     from unittest.mock import AsyncMock  # noqa: PLC0415

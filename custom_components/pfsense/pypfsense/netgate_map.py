@@ -537,6 +537,54 @@ def parse_dyndns_cache(text: str) -> tuple[str | None, int | None]:
     return ip, when
 
 
+# ntpq's tally codes as pfSense labels them; these two mean "selected".
+_NTP_SELECTED = {"Active Peer", "PPS Peer"}
+
+
+def _ntp_float(value: Any) -> float | None:
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _ntp_int(value: Any) -> int | None:
+    number = _ntp_float(value)
+    return int(number) if number is not None else None
+
+
+def ntp_status(body: Any) -> dict:
+    """``/services/ntp/status`` → sync state and the selected peer.
+
+    Times are milliseconds, as ntpq prints them. ``peer`` is ``None`` while
+    nothing is selected (just started, or every source unreachable).
+    """
+    data = body if isinstance(body, dict) else {}
+    peers = [
+        {
+            "server": p.get("server") or None,
+            "status": p.get("status") or None,
+            "refid": p.get("refid") or None,
+            "stratum": _ntp_int(p.get("stratum")),
+            "offset_ms": _ntp_float(p.get("offset")),
+            "delay_ms": _ntp_float(p.get("delay")),
+            "jitter_ms": _ntp_float(p.get("jitter")),
+            "reach": p.get("reach") or None,
+        }
+        for p in _items(data, "servers")
+        if p.get("refid") != ".POOL."
+    ]
+    peer = next((p for p in peers if p["status"] in _NTP_SELECTED), None)
+    return {
+        "enabled": bool(data.get("enabled")),
+        "synchronized": peer is not None,
+        "peer": peer,
+        "offset_ms": peer["offset_ms"] if peer else None,
+        "stratum": peer["stratum"] if peer else None,
+        "peers": peers,
+    }
+
+
 def _cert_time(value: Any) -> str | None:
     """``"2027-01-18 09:17:33 +0000 UTC"`` → ISO 8601, or ``None``."""
     text = str(value or "").strip().removesuffix(" UTC").strip()

@@ -54,6 +54,9 @@ class PfSenseBackend(Protocol):
     async def get_dyndns(self) -> list[dict]:
         """Return dynamic DNS entries with ``ip``, ``ipv6`` and ``last_update``."""
 
+    async def get_ntp_status(self) -> dict:
+        """Return ``{"enabled", "synchronized", "peer", "offset_ms", "stratum", "peers"}``."""
+
     async def get_certificates(self) -> list[dict]:
         """Return in-use/server certificates: refid, name, expires (ISO), ..."""
 
