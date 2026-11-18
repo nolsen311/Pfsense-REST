@@ -57,6 +57,7 @@ from .util import (
     _expand_alias_networks,
     _shq,
     parse_notices,
+    parse_pf_states,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -82,6 +83,15 @@ class _SessionInvalid(PfSenseAuthError):
 
 def _b64(value: str) -> str:
     return base64.b64encode(value.encode()).decode()
+
+
+def _b64_text(value) -> str:
+    """Decode a base64 text field, or return it unchanged if it isn't base64."""
+    raw = str(value or "")
+    try:
+        return base64.b64decode(raw, validate=True).decode(errors="replace")
+    except (binascii.Error, ValueError):
+        return raw
 
 
 def _token_expiry(token: str) -> float | None:
@@ -496,7 +506,9 @@ class NetgateClient:
         installed = ((info or {}).get("base") or {}).get("installed_version")
         branch = body.get("firmware_branch") or installed
         if not branch:
-            raise PfSenseAPIError("cannot determine the firmware branch to upgrade")
+            raise PfSenseAPIError(
+                0, "", "cannot determine the firmware branch to upgrade"
+            )
         async with self._write_lock:
             with contextlib.suppress(PfSenseConnectionError):
                 await self._request(
@@ -545,6 +557,29 @@ class NetgateClient:
             )
         self._package_upgrading[name] = pkg["installed_version"]
         self._packages = None
+
+    async def get_state_table(self) -> dict:
+        """State-table size and limit (``/diag/pfinfo``), no shell needed.
+
+        pfinfo is ``pfctl -si`` / ``-sm`` text, base64-encoded. The
+        ``system/states`` monitoring dataset adds 60 s averages of NAT states
+        and source/destination IPs.
+        """
+        body, dataset = await asyncio.gather(
+            self._get("/diag/pfinfo"), self._optional(self._monitoring("states"))
+        )
+        info = (body or {}).get("pfinfo") or {}
+        try:
+            table = parse_pf_states(
+                _b64_text(info.get("info")), _b64_text(info.get("memory"))
+            )
+        except ValueError as err:
+            raise PfSenseAPIError(0, "", f"unexpected pfinfo: {err}") from err
+        dataset = dataset or {}
+        table["nat_states"] = dataset.get("pfnat")
+        table["source_ips"] = dataset.get("srcip")
+        table["destination_ips"] = dataset.get("dstip")
+        return table
 
     async def get_notices(self) -> dict:
         """Pending pfSense notices: ``{"count", "latest": [...]}`` (newest 3).

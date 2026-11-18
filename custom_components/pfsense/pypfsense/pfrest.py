@@ -37,12 +37,14 @@ from .errors import (
 )
 from .util import (
     NOTICES_COMMAND,
+    PF_STATES_COMMAND,
     _as_network,
     _expand_alias_networks,
     _flatten_params,
     _shq,
     _states_prefix,
     parse_notices,
+    parse_pf_states,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -279,6 +281,17 @@ class PfRestClient:
         raise PfSenseUnsupportedError(
             "package install is not supported by the REST API package backend"
         )
+
+    async def get_state_table(self) -> dict:
+        """State-table size and limit, from ``pfctl`` via ``command_prompt``."""
+        try:
+            return parse_pf_states(await self.exec_command(PF_STATES_COMMAND))
+        except (PfSensePrivilegeError, PfSenseNotFoundError) as err:
+            raise PfSenseUnsupportedError(
+                f"state table needs command access: {err}"
+            ) from err
+        except ValueError as err:
+            raise PfSenseUnsupportedError(f"state table unavailable: {err}") from err
 
     async def get_notices(self) -> dict:
         """Pending pfSense notices: ``{"count", "latest": [...]}`` (newest 3).
