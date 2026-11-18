@@ -75,6 +75,7 @@ UPDATE_INFO_TTL = 3600.0
 # While an upgrade is running, re-read the update status this often so the
 # new version is noticed soon after the reboot.
 DYNDNS_TTL = 300
+BACKUP_HEADER = b"---- BEGIN config.xml ----"
 UPDATE_INFO_TTL_UPGRADING = 60.0
 
 
@@ -187,8 +188,14 @@ class NetgateClient:
         params: dict | None = None,
         payload: Any = None,
         headers: dict[str, str] | None = None,
+        raw: bool = False,
+        timeout: float = DEFAULT_TIMEOUT,
     ) -> tuple[Any, aiohttp.ClientResponse]:
-        """Send one request; return ``(json body, response)`` or raise typed."""
+        """Send one request; return ``(body, response)`` or raise typed.
+
+        The body is parsed JSON, or the bytes when ``raw`` (errors are JSON
+        either way).
+        """
         url = f"{self._base}{path}"
         try:
             async with self._session.request(
@@ -198,8 +205,10 @@ class NetgateClient:
                 json=payload,
                 headers=headers,
                 ssl=self._verify_ssl,
-                timeout=aiohttp.ClientTimeout(total=DEFAULT_TIMEOUT),
+                timeout=aiohttp.ClientTimeout(total=timeout),
             ) as resp:
+                if raw and 200 <= resp.status < 300:
+                    return await resp.read(), resp
                 try:
                     body = await resp.json(content_type=None)
                 except (aiohttp.ClientError, ValueError):
@@ -293,9 +302,12 @@ class NetgateClient:
         *,
         params: dict | None = None,
         payload: Any = None,
+        raw: bool = False,
+        timeout: float = DEFAULT_TIMEOUT,
     ) -> Any:
         """Authenticated request; one retry after a rejected session."""
         token = await self._ensure_token()
+        extra = {"raw": raw, "timeout": timeout}
         try:
             body, _ = await self._http(
                 method,
@@ -303,6 +315,7 @@ class NetgateClient:
                 params=params,
                 payload=payload,
                 headers={"Authorization": f"Bearer {token}"},
+                **extra,
             )
         except _SessionInvalid:
             token = await self._ensure_token(stale=token)
@@ -313,6 +326,7 @@ class NetgateClient:
                     params=params,
                     payload=payload,
                     headers={"Authorization": f"Bearer {token}"},
+                    **extra,
                 )
             except _SessionInvalid as err:
                 raise PfSenseAuthError(str(err)) from err
@@ -521,15 +535,15 @@ class NetgateClient:
         self._upgrade_from = installed
         self._update_info = None
 
-    async def get_installed_packages(self) -> list[dict]:
+    async def get_installed_packages(self, refresh: bool = False) -> list[dict]:
         """Add-on packages and their available updates, cached for an hour.
 
         While a package upgrade is pending, re-read every minute until its
-        installed version changes.
+        installed version changes. ``refresh`` skips the cache.
         """
         now = time.monotonic()
         ttl = UPDATE_INFO_TTL_UPGRADING if self._package_upgrading else UPDATE_INFO_TTL
-        if self._packages and now - self._packages[0] < ttl:
+        if not refresh and self._packages and now - self._packages[0] < ttl:
             return self._packages[1]
         packages = netgate_map.installed_packages(
             await self._get("/system/package/installed")
@@ -583,6 +597,50 @@ class NetgateClient:
             body = await self._request("POST", "/system/bootenv/quick", payload={})
         self._boot_envs = None
         return body.get("name") if isinstance(body, dict) else None
+
+    async def remove_package(self, package: str) -> None:
+        """Uninstall a package by its full name (``pfSense-pkg-<name>``).
+
+        ``DELETE /system/package/name/{name}`` takes the full name and
+        returns ``{transaction: "<pkg>-delete", progress}`` at once; the
+        package leaves the installed list ~10 s later (verified 2026-11-17
+        with pfSense-pkg-nut). pfSense keeps the package's settings in
+        config.xml, so a reinstall picks them up again.
+        """
+        async with self._write_lock:
+            await self._request(
+                "DELETE", f"/system/package/name/{quote(package, safe='')}"
+            )
+        self._packages = None
+
+    async def install_packages(self, packages: list[str]) -> None:
+        """Install packages by full name (``pfSense-pkg-<name>``) in one request."""
+        async with self._write_lock:
+            await self._request(
+                "POST",
+                "/system/package/install",
+                payload={"packages": [{"name": p} for p in packages]},
+                timeout=120,
+            )
+        self._packages = None
+
+    async def download_config_backup(self, password: str) -> bytes:
+        """The whole config ("Backup Area: All", no RRD data), encrypted.
+
+        ``POST /diag/backup {area: "", norrd, enc, pwd}`` returns pfSense's
+        encrypted format (``---- BEGIN config.xml ----``), which its
+        Backup & Restore page restores with the same password.
+        """
+        data = await self._request(
+            "POST",
+            "/diag/backup",
+            payload={"area": "", "norrd": True, "enc": True, "pwd": password},
+            raw=True,
+            timeout=120,
+        )
+        if not isinstance(data, bytes) or not data.startswith(BACKUP_HEADER):
+            raise PfSenseAPIError(0, "", "the config backup is not an encrypted backup")
+        return data
 
     async def get_dyndns(self) -> list[dict]:
         """Dynamic DNS entries with their last update, cached for 5 minutes.

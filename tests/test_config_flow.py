@@ -443,3 +443,39 @@ async def test_firmware_install_option_only_for_netgate(hass: HomeAssistant):
     result = await hass.config_entries.options.async_init(netgate.entry_id)
     keys = {str(k): k for k in result["data_schema"].schema}
     assert keys["firmware_install_unverified"].default() is False
+
+
+@pytest.mark.asyncio
+async def test_safe_upgrade_options(hass: HomeAssistant):
+    """Safe upgrade needs a password; a blank password keeps the stored one."""
+    netgate = MockConfigEntry(
+        domain=DOMAIN,
+        version=5,
+        unique_id="safe",
+        data={CONF_URL: "https://10.0.0.2:8443", CONF_BACKEND: BACKEND_NETGATE},
+    )
+    netgate.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(netgate.entry_id)
+    keys = {str(k): k for k in result["data_schema"].schema}
+    assert keys["firmware_safe_upgrade"].default() is False
+    assert keys["firmware_keep_packages"].default() == "Nexus, Netgate_Firmware_Upgrade"
+    assert "firmware_backup_password" in keys
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={"firmware_safe_upgrade": True}
+    )
+    assert result["errors"] == {"firmware_backup_password": "backup_password_required"}
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={"firmware_safe_upgrade": True, "firmware_backup_password": "pw"},
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert netgate.options["firmware_backup_password"] == "pw"
+
+    result = await hass.config_entries.options.async_init(netgate.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={"firmware_safe_upgrade": True, "firmware_backup_password": ""},
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert netgate.options["firmware_backup_password"] == "pw"

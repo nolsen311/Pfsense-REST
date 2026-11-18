@@ -42,7 +42,7 @@ class PfSenseBackend(Protocol):
     async def start_firmware_update(self) -> None:
         """Start a base-system upgrade (the firewall reboots during it)."""
 
-    async def get_installed_packages(self) -> list[dict]:
+    async def get_installed_packages(self, refresh: bool = False) -> list[dict]:
         """Return add-on packages: name, installed/latest version, update flag."""
 
     async def install_package_update(self, name: str) -> None:
@@ -56,6 +56,15 @@ class PfSenseBackend(Protocol):
 
     async def create_boot_environment(self) -> str | None:
         """Snapshot the running system as a new boot environment."""
+
+    async def remove_package(self, package: str) -> None:
+        """Uninstall a package by its full name."""
+
+    async def install_packages(self, packages: list[str]) -> None:
+        """Install packages by full name."""
+
+    async def download_config_backup(self, password: str) -> bytes:
+        """Return the whole config, encrypted with ``password``."""
 
     async def get_dyndns(self) -> list[dict]:
         """Return dynamic DNS entries with ``ip``, ``ipv6`` and ``last_update``."""

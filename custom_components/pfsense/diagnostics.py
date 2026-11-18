@@ -15,9 +15,22 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_URL, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_API_KEY, COORDINATOR, DOMAIN, HEALTH
+from .const import (
+    CONF_API_KEY,
+    CONF_FIRMWARE_BACKUP_PASSWORD,
+    COORDINATOR,
+    DOMAIN,
+    HEALTH,
+)
 
-TO_REDACT = {CONF_API_KEY, CONF_PASSWORD, CONF_USERNAME, CONF_URL, "name"}
+TO_REDACT = {
+    CONF_API_KEY,
+    CONF_PASSWORD,
+    CONF_USERNAME,
+    CONF_URL,
+    CONF_FIRMWARE_BACKUP_PASSWORD,
+    "name",
+}
 
 _IPV4 = re.compile(r"(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])")
 _MAC = re.compile(r"\b[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}\b")
@@ -56,7 +69,7 @@ async def async_get_config_entry_diagnostics(
         "entry": {
             "version": entry.version,
             "data": async_redact_data(dict(entry.data), TO_REDACT),
-            "options": dict(entry.options),
+            "options": async_redact_data(dict(entry.options), TO_REDACT),
         },
         "health": _scrub(health.as_dict()) if health else None,
         "firewall": {

@@ -139,10 +139,16 @@
           "device_tracker_scan_interval": "Device Tracker Scan Interval (seconds)",
           "device_tracker_consider_home": "Device Tracker Consider Home (seconds)",
           "rule_switch_kill_states": "Reset matching states when a rule switch is toggled",
-          "firmware_install_unverified": "Allow firmware install from Home Assistant (experimental, not yet verified)"
+          "firmware_install_unverified": "Allow firmware install from Home Assistant (experimental, not yet verified)",
+          "firmware_safe_upgrade": "Safe firmware upgrade (Netgate's recommended steps)",
+          "firmware_backup_password": "Config backup password",
+          "firmware_keep_packages": "Packages to keep installed during a safe upgrade"
         },
         "data_description": {
-          "firmware_install_unverified": "Adds an Install button to the firmware update entity (Netgate API only). The upgrade call is built from Netgate's API documentation and has not been tested on a real upgrade yet. The firewall reboots while upgrading. Leave this off unless you are ready to recover from the console if it goes wrong."
+          "firmware_install_unverified": "Adds an Install button to the firmware update entity (Netgate API only). The upgrade call is built from Netgate's API documentation and has not been tested on a real upgrade yet. The firewall reboots while upgrading. Leave this off unless you are ready to recover from the console if it goes wrong.",
+          "firmware_safe_upgrade": "When you install a pfSense update, first take a boot environment snapshot, save an encrypted config backup in Home Assistant's pfsense_backups folder, and remove the add-on packages. Then upgrade, and reinstall the packages once the new version is running. Needs the firmware install option above.",
+          "firmware_backup_password": "pfSense encrypts the config backup with this. You need it to restore the file in pfSense's Diagnostics › Backup & Restore. Leave blank to keep the current password.",
+          "firmware_keep_packages": "Comma-separated package names, as pfSense lists them without the pfSense-pkg- prefix. Nexus is always kept, because it is the API Home Assistant uses."
         }
       },
       "device_tracker": {
@@ -151,6 +157,9 @@
           "devices": "Devices to Track"
         }
       }
+    },
+    "error": {
+      "backup_password_required": "Set a config backup password to use the safe firmware upgrade."
     }
   },
   "issues": {
@@ -181,6 +190,10 @@
     "certificate_expiring": {
       "title": "{name}: certificate expiring",
       "description": "These certificates on the firewall expire soon or have expired: **{certificates}**.\n\nRenew or replace them in System › Certificates, or in Services › ACME for ACME certificates. This notice clears itself once no tracked certificate is within 14 days of expiry."
+    },
+    "safe_upgrade_incomplete": {
+      "title": "{name}: safe firmware upgrade did not finish",
+      "description": "The safe firmware upgrade stopped at {when}: **{error}**.\n\n- Packages removed and **not reinstalled**: **{packages}**\n- Boot environment taken before starting: `{boot_environment}`\n- Encrypted config backup: `{backup}`\n\nTo recover:\n1. Check the firewall's version and status in its web GUI.\n2. Reinstall the packages listed above in System › Package Manager. Their settings are still in the config.\n3. If the upgrade left the firewall broken, activate the boot environment above in System › Boot Environments, or from the console menu, and reboot.\n\nThis notice clears itself once the removed packages are installed again."
     }
   }
 }
