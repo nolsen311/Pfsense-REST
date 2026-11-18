@@ -662,3 +662,129 @@ def boot_environments(body: Any) -> list[dict]:
         )
     out.sort(key=lambda e: e["created"] or "", reverse=True)
     return out
+
+
+# -------------------------------------------------------- DNS resolver / schedules
+
+
+def _num(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def dns_resolver_status(body: Any) -> list[dict]:
+    """``/services/dnsresolver/status`` → one row per upstream server.
+
+    ``speed`` (Unbound's infra cache: smoothed RTT, ping, variance, RTO and
+    timeouts, in ms) and ``stats`` (lameness flags) are merged by server.
+    The server is ``<address>@<port>`` (853 for DNS over TLS).
+    """
+    data = body if isinstance(body, dict) else {}
+    lame: dict[str, int] = {}
+    for row in _items(data, "stats"):
+        lame[str(row.get("server"))] = sum(
+            int(_num(row.get(k)) or 0)
+            for k in ("lame_dnssec", "lame_rec", "lame_a", "lame_other")
+        )
+    out = []
+    for row in _items(data, "speed"):
+        server = str(row.get("server") or "")
+        if not server:
+            continue
+        address, _, port = server.rpartition("@") if "@" in server else (server, "", "")
+        timeouts = {
+            k: int(_num(row.get(f"timeout_{k}")) or 0) for k in ("a", "aaaa", "other")
+        }
+        out.append(
+            {
+                "server": server,
+                "address": address,
+                "port": int(port) if port.isdigit() else None,
+                "zone": row.get("zone") or None,
+                "rtt_ms": _num(row.get("rtt")),
+                "ping_ms": _num(row.get("ping")),
+                "variance_ms": _num(row.get("var")),
+                "rto_ms": _num(row.get("rto")),
+                "timeouts": sum(timeouts.values()),
+                "timeouts_a": timeouts["a"],
+                "timeouts_aaaa": timeouts["aaaa"],
+                "timeouts_other": timeouts["other"],
+                "lame": lame.get(server, 0),
+                "expired": bool(row.get("expired")),
+            }
+        )
+    return out
+
+
+def _hhmm(text: str) -> int | None:
+    hours, _, minutes = text.strip().partition(":")
+    if not (hours.isdigit() and minutes.isdigit()):
+        return None
+    return int(hours) * 60 + int(minutes)
+
+
+def _ints(text: Any) -> list[int]:
+    return [int(p) for p in str(text or "").split(",") if p.strip().isdigit()]
+
+
+def schedules(body: Any) -> list[dict]:
+    """``/firewall/schedules`` → schedules with parsed time ranges.
+
+    Each range is weekly (``position``: ISO weekdays, 1 = Monday) or on
+    specific dates (parallel ``month``/``day`` lists), with ``hour``
+    ``"HH:MM-HH:MM"``.
+    """
+    out = []
+    for sched in _items(body, "schedules"):
+        if not sched.get("name"):
+            continue
+        ranges = []
+        for tr in sched.get("timerange") or []:
+            if not isinstance(tr, dict):
+                continue
+            start_text, _, end_text = str(tr.get("hour") or "").partition("-")
+            start, end = _hhmm(start_text), _hhmm(end_text)
+            if start is None or end is None:
+                continue
+            months, days = _ints(tr.get("month")), _ints(tr.get("day"))
+            ranges.append(
+                {
+                    "weekdays": _ints(tr.get("position")) or None,
+                    "dates": list(zip(months, days, strict=False)) or None,
+                    "start": start,
+                    "end": end,
+                    "hours": f"{start_text.strip()}-{end_text.strip()}",
+                    "description": tr.get("rangedescr") or None,
+                }
+            )
+        out.append(
+            {
+                "name": sched["name"],
+                "description": sched.get("descr") or None,
+                "ranges": ranges,
+            }
+        )
+    return out
+
+
+def schedule_active(schedule: dict, now: datetime) -> bool:
+    """Whether ``schedule`` is active at ``now`` (the firewall's local time).
+
+    Minute resolution, with the end minute included: pfSense treats
+    ``00:00-23:59`` as the whole day.
+    """
+    minute = now.hour * 60 + now.minute
+    for rng in schedule.get("ranges") or []:
+        if rng["dates"]:
+            if (now.month, now.day) not in {tuple(d) for d in rng["dates"]}:
+                continue
+        elif rng["weekdays"]:
+            if now.isoweekday() not in rng["weekdays"]:
+                continue
+        else:
+            continue
+        if rng["start"] <= minute <= rng["end"]:
+            return True
+    return False

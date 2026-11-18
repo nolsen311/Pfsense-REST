@@ -820,3 +820,112 @@ async def test_create_boot_environment_posts_quick_and_drops_cache():
     )
     await client.get_boot_environments()
     assert client._get.await_count == 2
+
+
+_RESOLVER = {
+    "speed": [
+        {
+            "server": "1.1.1.1@853",
+            "zone": ".",
+            "ping": 35,
+            "var": 23,
+            "rtt": 127,
+            "rto": 127,
+            "timeout_a": 1,
+            "timeout_aaaa": 2,
+            "timeout_other": 0,
+            "expired": False,
+        },
+        {"server": "", "rtt": 1},
+    ],
+    "stats": [
+        {
+            "server": "1.1.1.1@853",
+            "lame_dnssec": 1,
+            "lame_rec": 0,
+            "lame_a": 2,
+            "lame_other": 0,
+        }
+    ],
+}
+_SCHEDULES = {
+    "schedules": [
+        {
+            "name": "6a_10p_Daylight",
+            "descr": "",
+            "timerange": [
+                {
+                    "position": "1,2,3,4,5,6,7",
+                    "month": "",
+                    "day": "",
+                    "hour": "06:00-22:00",
+                    "rangedescr": "6a to 10p",
+                }
+            ],
+        },
+        {
+            "name": "Overnight_22_6",
+            "timerange": [
+                {"position": "1,2,3,4,5,6,7", "hour": "22:00-23:59"},
+                {"position": "1,2,3,4,5,6,7", "hour": "00:00-06:00"},
+            ],
+        },
+        {
+            "name": "Weekdays",
+            "timerange": [{"position": "1,2,3,4,5", "hour": "09:00-17:00"}],
+        },
+        {
+            "name": "Holidays",
+            "timerange": [{"month": "12,1", "day": "25,1", "hour": "0:00-23:59"}],
+        },
+        {"name": "Broken", "timerange": [{"position": "1", "hour": "nonsense"}]},
+        {"descr": "no name"},
+    ]
+}
+
+
+def test_dns_resolver_status():
+    """Speed and stats merge by server; address and port split."""
+    (row,) = nm.dns_resolver_status(_RESOLVER)
+    assert (row["address"], row["port"], row["rtt_ms"], row["ping_ms"]) == (
+        "1.1.1.1",
+        853,
+        127.0,
+        35.0,
+    )
+    assert (row["timeouts"], row["timeouts_aaaa"], row["lame"]) == (3, 2, 3)
+    assert nm.dns_resolver_status({}) == []
+
+
+def test_schedules_and_activity():
+    """Weekly ranges, the overnight split, dates; end minute included."""
+    from datetime import datetime  # noqa: PLC0415
+
+    by_name = {s["name"]: s for s in nm.schedules(_SCHEDULES)}
+    assert set(by_name) == {
+        "6a_10p_Daylight",
+        "Overnight_22_6",
+        "Weekdays",
+        "Holidays",
+        "Broken",
+    }
+    assert by_name["Broken"]["ranges"] == []
+    assert by_name["Holidays"]["ranges"][0]["dates"] == [(12, 25), (1, 1)]
+
+    def active(name, when):
+        return nm.schedule_active(by_name[name], datetime.fromisoformat(when))
+
+    # Tuesday 2026-11-17
+    assert active("6a_10p_Daylight", "2026-11-17T06:00") is True
+    assert active("6a_10p_Daylight", "2026-11-17T22:00") is True  # end minute included
+    assert active("6a_10p_Daylight", "2026-11-17T22:01") is False
+    assert active("6a_10p_Daylight", "2026-11-17T05:59") is False
+    assert active("Overnight_22_6", "2026-11-17T23:59") is True
+    assert active("Overnight_22_6", "2026-11-18T03:00") is True
+    assert active("Overnight_22_6", "2026-11-17T12:00") is False
+    assert active("Weekdays", "2026-11-17T10:00") is True
+    assert active("Weekdays", "2026-11-21T10:00") is False  # Saturday
+    assert active("Holidays", "2026-12-25T15:00") is True
+    assert active("Holidays", "2027-01-01T00:00") is True
+    assert active("Holidays", "2026-12-24T15:00") is False
+    assert active("Broken", "2026-11-16T12:00") is False

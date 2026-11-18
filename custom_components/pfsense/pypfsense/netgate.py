@@ -177,6 +177,7 @@ class NetgateClient:
         self._packages: tuple[float, list[dict]] | None = None
         self._dyndns: tuple[float, list[dict]] | None = None
         self._boot_envs: tuple[float, list[dict]] | None = None
+        self._schedules: tuple[float, dict] | None = None
         self._certificates: tuple[float, list[dict]] | None = None
         self._package_upgrading: dict[str, str] = {}
 
@@ -643,6 +644,31 @@ class NetgateClient:
         if not isinstance(data, bytes) or not data.startswith(BACKUP_HEADER):
             raise PfSenseAPIError(0, "", "the config backup is not an encrypted backup")
         return data
+
+    async def get_dns_resolver_status(self) -> list[dict]:
+        """Unbound's per-upstream RTT, timeouts and lameness."""
+        return netgate_map.dns_resolver_status(
+            await self._get("/services/dnsresolver/status")
+        )
+
+    async def get_schedules(self) -> dict:
+        """Firewall schedules plus the firewall's timezone, cached for 5 minutes.
+
+        The API has no "active now" flag; entities work it out from the
+        ranges in ``timezone`` (``/system/setup``).
+        """
+        now = time.monotonic()
+        if self._schedules and now - self._schedules[0] < DYNDNS_TTL:
+            return self._schedules[1]
+        body, setup = await asyncio.gather(
+            self._get("/firewall/schedules"), self._get_shared("/system/setup")
+        )
+        result = {
+            "timezone": (setup or {}).get("timezone") or None,
+            "schedules": netgate_map.schedules(body),
+        }
+        self._schedules = (now, result)
+        return result
 
     # ------------------------------------------------------- diagnostics
     # These send test traffic from the firewall; none changes its config.

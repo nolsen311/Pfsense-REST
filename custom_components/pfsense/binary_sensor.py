@@ -11,11 +11,12 @@ from homeassistant.const import STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
-from homeassistant.util import slugify
+from homeassistant.util import dt as dt_util, slugify
 
 from . import CoordinatorEntityManager, PfSenseEntity
 from .const import COORDINATOR, DOMAIN
 from .health_entity import PfSenseApiConnectedBinarySensor
+from .pypfsense.netgate_map import schedule_active
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,7 +32,24 @@ async def async_setup_entry(
     def process_entities_callback(hass, config_entry):
         data = hass.data[DOMAIN][config_entry.entry_id]
         coordinator = data[COORDINATOR]
+        schedules = ((coordinator.data or {}).get("schedules") or {}).get(
+            "schedules"
+        ) or []
         return [
+            *(
+                PfSenseScheduleBinarySensor(
+                    config_entry,
+                    coordinator,
+                    BinarySensorEntityDescription(
+                        key=f"schedule.{sched['name']}",
+                        name=f"Schedule {sched['name']}",
+                        icon="mdi:calendar-clock",
+                    ),
+                    True,
+                    sched["name"],
+                )
+                for sched in schedules
+            ),
             PfSenseCarpStatusBinarySensor(
                 config_entry,
                 coordinator,
@@ -189,3 +207,71 @@ class PfSenseNtpSyncBinarySensor(PfSenseBinarySensor):
                 for p in ntp.get("peers") or []
             ],
         }
+
+
+class PfSenseScheduleBinarySensor(PfSenseBinarySensor):
+    """On while a firewall schedule is active (rules using it apply).
+
+    The API has no "active" flag, so it's worked out from the schedule's
+    ranges in the firewall's timezone, at each poll.
+    """
+
+    def __init__(self, config_entry, coordinator, entity_description, enabled, name):
+        """Initialize for schedule ``name``."""
+        super().__init__(config_entry, coordinator, entity_description, enabled)
+        self._schedule_name = name
+
+    def _data(self) -> tuple[dict | None, str | None]:
+        data = (self.coordinator.data or {}).get("schedules") or {}
+        sched = next(
+            (
+                s
+                for s in data.get("schedules") or []
+                if s.get("name") == self._schedule_name
+            ),
+            None,
+        )
+        return sched, data.get("timezone")
+
+    @property
+    def available(self):
+        """Unavailable once the schedule is gone."""
+        return self._data()[0] is not None and super().available
+
+    @property
+    def is_on(self):
+        """Whether the schedule is active now, in the firewall's time."""
+        sched, tz_name = self._data()
+        if sched is None:
+            return None
+        tz = dt_util.get_time_zone(tz_name) if tz_name else None
+        return schedule_active(sched, dt_util.now(tz))
+
+    @property
+    def extra_state_attributes(self):
+        """The ranges, readable, and the timezone they are in."""
+        sched, tz_name = self._data()
+        sched = sched or {}
+        ranges = []
+        for rng in sched.get("ranges") or []:
+            if rng.get("dates"):
+                when = ", ".join(f"{m:02d}-{d:02d}" for m, d in rng["dates"])
+            else:
+                when = ",".join(
+                    _WEEKDAYS[d - 1] for d in rng.get("weekdays") or [] if 1 <= d <= 7
+                )
+            ranges.append(
+                {
+                    "days": when,
+                    "hours": rng.get("hours"),
+                    "description": rng.get("description"),
+                }
+            )
+        return {
+            "description": sched.get("description"),
+            "timezone": tz_name,
+            "ranges": ranges,
+        }
+
+
+_WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")

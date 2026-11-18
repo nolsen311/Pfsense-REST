@@ -405,6 +405,28 @@ Verified against the live 26.07 box:
     - The whole sequence runs only on a real upgrade, so it's still
       unverified like the firmware install. `_http(raw=True)` returns bytes
       for 2xx responses.
+- **DNS resolver** (Netgate only):
+  - `GET /services/dnsresolver/status` returns `{speed, stats}`, from
+    Unbound's infra cache, with one row per upstream, `server`
+    `"1.1.1.1@853"`.
+  - `speed` has `rtt` (the smoothed RTT), `ping`, `var`, `rto` (ms ints) and
+    `timeout_a/aaaa/other`. `stats` has the `lame_*` flags. They're merged
+    by server in `netgate_map.dns_resolver_status`.
+  - It's polled every time: one RTT sensor per upstream, created at setup.
+  - pfrest: unsupported.
+- **Firewall schedules** (Netgate only):
+  - `GET /firewall/schedules` returns `{schedules: [{id, name, descr,
+    timerange: [{position, month, day, hour, rangedescr}], schedlabel}]}`.
+  - `position` holds ISO weekdays ("1,2,…,7", 1 = Monday). `month`/`day`
+    are parallel lists for date ranges. `hour` is `"HH:MM-HH:MM"`.
+  - Overnight ranges are split by pfSense into `22:00-23:59` and
+    `00:00-06:00`, so the end minute is **inclusive**.
+  - There's no "active now" field. `schedule_active()` evaluates it in the
+    firewall's timezone (`/system/setup` `timezone`, e.g.
+    `America/Los_Angeles`), not HA's.
+  - Cached for 5 min; one binary sensor per schedule.
+  - pfrest: unsupported.
+  - Verified live (read-only) on 2026-11-17: 2 upstreams (DoT); 2 schedules.
 - **Diagnostics actions** (Netgate only; `pypfsense/diag.py` parsers;
   `ServiceRegistrar._register_diagnostics`, `SupportsResponse.ONLY`):
   - They're **not** routed through entities like the other services. They

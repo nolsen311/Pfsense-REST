@@ -66,6 +66,12 @@ class PfSenseBackend(Protocol):
     async def download_config_backup(self, password: str) -> bytes:
         """Return the whole config, encrypted with ``password``."""
 
+    async def get_dns_resolver_status(self) -> list[dict]:
+        """Return Unbound's per-upstream RTT, timeouts and lameness."""
+
+    async def get_schedules(self) -> dict:
+        """Return ``{"timezone", "schedules": [...]}``."""
+
     async def ping(
         self, host: str, count: int = 3, source: str | None = None, ipv6: bool = False
     ) -> dict:

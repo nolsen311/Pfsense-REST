@@ -153,6 +153,10 @@ want in the entity settings.
 - **Per gateway:** status, RTT delay, jitter (stddev), packet loss %.
 - **Per OpenVPN server:** connected client count, total bytes in/out plus rates.
 - **Per CARP virtual IP:** MASTER / BACKUP status.
+- **Per upstream DNS server** (Netgate API, diagnostic): the DNS Resolver's
+  (Unbound's) smoothed round-trip time in ms, with ping, variance, timeouts
+  and lameness counts in the attributes. The server is shown as
+  `<address>@<port>` (853 means DNS over TLS).
 
 ### Switches
 
@@ -171,6 +175,11 @@ want in the entity settings.
   endpoint reports notices, so they're read through the shell, which needs a
   user with shell access. The sensor is unavailable without it, and once
   Netgate removes PHP from pfSense.
+- **Schedule `<name>`** (Netgate API): one per firewall schedule. It's on
+  while the schedule is active, so rules that use it apply. pfSense has no
+  "active" flag, so it's worked out from the schedule's time ranges in the
+  **firewall's** timezone, at each poll. The attributes list the ranges and
+  that timezone.
 
 ### Buttons
 
