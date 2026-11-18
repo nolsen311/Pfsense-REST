@@ -306,6 +306,16 @@ class PfRestClient:
         """Not implemented for the REST API package backend."""
         raise PfSenseUnsupportedError("the safe upgrade needs the Netgate API backend")
 
+    async def get_dns_resolver_status(self) -> list[dict]:
+        """Not implemented for the REST API package backend."""
+        raise PfSenseUnsupportedError(
+            "DNS resolver status needs the Netgate API backend"
+        )
+
+    async def get_schedules(self) -> dict:
+        """Not implemented for the REST API package backend."""
+        raise PfSenseUnsupportedError("firewall schedules need the Netgate API backend")
+
     async def ping(
         self, host: str, count: int = 3, source: str | None = None, ipv6: bool = False
     ) -> dict:

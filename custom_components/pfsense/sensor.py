@@ -335,6 +335,24 @@ async def async_setup_entry(  # noqa: C901 - flat per-telemetry-type entity buil
                 )
             )
 
+        entities.extend(
+            PfSenseDnsResolverSensor(
+                config_entry,
+                coordinator,
+                SensorEntityDescription(
+                    key=f"dns_resolver.{slugify(row['server'])}",
+                    name=f"DNS Resolver {row['address']} RTT",
+                    icon="mdi:dns",
+                    native_unit_of_measurement=UnitOfTime.MILLISECONDS,
+                    state_class=SensorStateClass.MEASUREMENT,
+                    entity_category=EntityCategory.DIAGNOSTIC,
+                ),
+                True,
+                row["server"],
+            )
+            for row in dict_get(state, "dns_resolver", None) or []
+        )
+
         entities.extend(build_health_sensors(config_entry, coordinator))
         return entities
 
@@ -853,4 +871,51 @@ class PfSenseBootEnvironmentSensor(PfSenseSensor):
                 }
                 for e in envs
             ],
+        }
+
+
+class PfSenseDnsResolverSensor(PfSenseSensor):
+    """Unbound's smoothed round-trip time to one upstream DNS server."""
+
+    def __init__(self, config_entry, coordinator, entity_description, enabled, server):
+        """Initialize for upstream ``server`` (``<address>@<port>``)."""
+        super().__init__(config_entry, coordinator, entity_description, enabled)
+        self._server = server
+
+    def _row(self) -> dict | None:
+        for row in (self.coordinator.data or {}).get("dns_resolver") or []:
+            if row.get("server") == self._server:
+                return row
+        return None
+
+    @property
+    def available(self) -> bool:
+        """Unavailable while Unbound has no entry for the server."""
+        return self._row() is not None and super().available
+
+    @property
+    def native_value(self):
+        """Smoothed RTT in ms."""
+        return (self._row() or {}).get("rtt_ms")
+
+    @property
+    def extra_state_attributes(self):
+        """Ping, variance, timeouts and lameness."""
+        row = self._row() or {}
+        return {
+            k: row.get(k)
+            for k in (
+                "server",
+                "port",
+                "zone",
+                "ping_ms",
+                "variance_ms",
+                "rto_ms",
+                "timeouts",
+                "timeouts_a",
+                "timeouts_aaaa",
+                "timeouts_other",
+                "lame",
+                "expired",
+            )
         }

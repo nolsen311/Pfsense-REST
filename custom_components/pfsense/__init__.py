@@ -398,6 +398,8 @@ _POLL_READS = (
     ("notices", "notices", "get_notices", None),
     ("dyndns", "dyndns", "get_dyndns", []),
     ("boot_environments", "boot_environments", "get_boot_environments", []),
+    ("dns_resolver", "dns_resolver", "get_dns_resolver_status", []),
+    ("schedules", "schedules", "get_schedules", None),
     ("ntp", "ntp", "get_ntp_status", None),
 )
 # Without these the device cannot be identified, so their failure fails the

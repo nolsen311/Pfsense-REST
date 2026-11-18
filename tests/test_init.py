@@ -59,6 +59,8 @@ def _full_client_mock():
     client.get_nat_outbound_rules.return_value = []
     client.get_firmware_update_info.return_value = None
     client.get_installed_packages.return_value = []
+    client.get_dns_resolver_status.return_value = []
+    client.get_schedules.return_value = {"timezone": None, "schedules": []}
     client.get_boot_environments.return_value = []
     client.get_dyndns.return_value = []
     client.get_ntp_status.return_value = {
@@ -708,4 +710,81 @@ async def test_diagnostics_redact_backup_password(hass: HomeAssistant):
     diag = await async_get_config_entry_diagnostics(hass, entry)
     assert diag["entry"]["options"]["firmware_backup_password"] == "**REDACTED**"
     assert "s3cret" not in repr(diag)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.asyncio
+async def test_schedule_and_resolver_entities(hass: HomeAssistant, freezer):
+    """Schedules are evaluated in the firewall's timezone; RTT per upstream."""
+    # 20:30 in Los Angeles = 04:30 UTC next day.
+    freezer.move_to("2026-11-18T04:30:00+00:00")
+    client = _full_client_mock()
+    client.get_schedules.return_value = {
+        "timezone": "America/Los_Angeles",
+        "schedules": [
+            {
+                "name": "6a_10p_Daylight",
+                "description": None,
+                "ranges": [
+                    {
+                        "weekdays": [1, 2, 3, 4, 5, 6, 7],
+                        "dates": None,
+                        "start": 360,
+                        "end": 1320,
+                        "hours": "06:00-22:00",
+                        "description": "6a to 10p",
+                    }
+                ],
+            },
+            {
+                "name": "Overnight_22_6",
+                "description": None,
+                "ranges": [
+                    {
+                        "weekdays": [1, 2, 3, 4, 5, 6, 7],
+                        "dates": None,
+                        "start": 1320,
+                        "end": 1439,
+                        "hours": "22:00-23:59",
+                        "description": None,
+                    }
+                ],
+            },
+        ],
+    }
+    client.get_dns_resolver_status.return_value = [
+        {
+            "server": "1.1.1.1@853",
+            "address": "1.1.1.1",
+            "port": 853,
+            "zone": ".",
+            "rtt_ms": 127.0,
+            "ping_ms": 35.0,
+            "variance_ms": 23.0,
+            "rto_ms": 127.0,
+            "timeouts": 0,
+            "timeouts_a": 0,
+            "timeouts_aaaa": 0,
+            "timeouts_other": 0,
+            "lame": 0,
+            "expired": False,
+        }
+    ]
+    entry = _netgate_entry()
+    await _setup(hass, entry, client)
+    day = hass.states.get("binary_sensor.router_local_schedule_6a_10p_daylight")
+    assert day.state == "on"  # 20:30 local, although it is 04:30 UTC
+    assert day.attributes["timezone"] == "America/Los_Angeles"
+    assert day.attributes["ranges"][0] == {
+        "days": "Mon,Tue,Wed,Thu,Fri,Sat,Sun",
+        "hours": "06:00-22:00",
+        "description": "6a to 10p",
+    }
+    assert (
+        hass.states.get("binary_sensor.router_local_schedule_overnight_22_6").state
+        == "off"
+    )
+    rtt = hass.states.get("sensor.router_local_dns_resolver_1_1_1_1_rtt")
+    assert rtt.state == "127.0"
+    assert rtt.attributes["port"] == 853 and rtt.attributes["ping_ms"] == 35.0
     assert await hass.config_entries.async_unload(entry.entry_id)

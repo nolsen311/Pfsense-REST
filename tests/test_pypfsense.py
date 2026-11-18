@@ -493,3 +493,16 @@ async def test_netgate_state_table_bad_pfinfo() -> None:
     netgate._monitoring = AsyncMock(return_value={})
     with pytest.raises(PfSenseAPIError, match="unexpected pfinfo"):
         await netgate.get_state_table()
+
+
+async def test_pfrest_resolver_and_schedules_unsupported() -> None:
+    """Pfrest reports both as unsupported."""
+    from custom_components.pfsense.pypfsense import (  # noqa: PLC0415
+        PfRestClient,
+        PfSenseUnsupportedError,
+    )
+
+    client = PfRestClient("https://pf.example:8444", object(), api_key="k")
+    for call in (client.get_dns_resolver_status, client.get_schedules):
+        with pytest.raises(PfSenseUnsupportedError):
+            await call()
