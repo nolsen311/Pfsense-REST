@@ -60,6 +60,7 @@ def mock_pfsense_client():
         "stratum": 2,
         "peers": [],
     }
+    client.get_certificates.return_value = []
     client.get_state_table.return_value = {
         "current": 100,
         "limit": 1000,

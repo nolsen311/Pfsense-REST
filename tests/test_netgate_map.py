@@ -630,3 +630,44 @@ def test_ntp_status():
         "stratum": None,
         "peers": [],
     }
+
+
+def test_certificates_keep_safe_fields_only():
+    """In-use or server certs only; keys, CSRs and bodies are never copied."""
+    body = {
+        "certs": [
+            {
+                "refid": "a1",
+                "descr": "GUI",
+                "type": "server",
+                "inuse": "",
+                "ends": "2027-01-18 09:17:33 +0000 UTC",
+                "starts": "2026-10-20 09:17:34 +0000 UTC",
+                "prv": "SECRET",
+                "crt": "BODY",
+                "csr": "CSR",
+                "can_renew": True,
+            },
+            {
+                "refid": "b2",
+                "descr": "vpn user",
+                "type": "user",
+                "inuse": "",
+                "ends": "2027-01-01 00:00:00 +0000 UTC",
+            },
+            {
+                "refid": "c3",
+                "descr": "DNS",
+                "type": "client",
+                "inuse": "DNS Resolver",
+                "ends": "2027-01-30 10:01:00 +0000 UTC",
+            },
+            {"refid": "d4", "descr": "bad", "type": "server", "ends": "not a date"},
+        ]
+    }
+    certs = nm.certificates(body)
+    assert [c["refid"] for c in certs] == ["a1", "c3"]
+    assert certs[0]["expires"] == "2027-01-18T09:17:33+00:00"
+    assert certs[1]["in_use"] == "DNS Resolver"
+    flat = repr(certs)
+    assert "SECRET" not in flat and "BODY" not in flat and "CSR" not in flat

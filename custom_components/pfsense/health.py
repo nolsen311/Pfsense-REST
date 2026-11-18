@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 import ssl
 import time
 from typing import Any
@@ -28,6 +29,7 @@ import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .pypfsense import (
@@ -88,7 +90,15 @@ ISSUE_POLL_KINDS = {
 }
 ISSUE_PRIVILEGE = "privilege_missing"
 ISSUE_PFREST_EOL = "pfrest_eol"
-_ALL_ISSUES = {*ISSUE_POLL_KINDS.values(), ISSUE_PRIVILEGE, ISSUE_PFREST_EOL}
+ISSUE_CERT_EXPIRING = "certificate_expiring"
+_ALL_ISSUES = {
+    *ISSUE_POLL_KINDS.values(),
+    ISSUE_PRIVILEGE,
+    ISSUE_PFREST_EOL,
+    ISSUE_CERT_EXPIRING,
+}
+# Raise the certificate repair this many days before a tracked cert expires.
+CERT_EXPIRY_WARNING_DAYS = 14
 
 # Service name of Netgate's Nexus controller, which serves the official API.
 NEXUS_SERVICE = "pfnet-controller"
@@ -339,6 +349,12 @@ def async_sync_issues(
             {**placeholders, "migration_url": MIGRATION_URL},
         )
 
+    if expiring := expiring_certificates(state):
+        wanted[ISSUE_CERT_EXPIRING] = (
+            ir.IssueSeverity.WARNING,
+            {**placeholders, "certificates": ", ".join(expiring)},
+        )
+
     for issue in _ALL_ISSUES:
         issue_id = f"{issue}_{entry.entry_id}"
         if issue in wanted:
@@ -381,3 +397,24 @@ def _placeholders(entry: ConfigEntry, tracker: HealthTracker) -> dict[str, str]:
         "backend": tracker.backend,
         "error": tracker.poll_error_message or "",
     }
+
+
+def expiring_certificates(state: dict | None, now: datetime | None = None) -> list[str]:
+    """``"name (in N days)"`` / ``"name (expired)"`` for in-use certs near expiry.
+
+    Unused certificates (old GUI defaults and the like) never raise a repair.
+    """
+    now = now or dt_util.utcnow()
+    out = []
+    for cert in (state or {}).get("certificates") or []:
+        if not cert.get("in_use"):
+            continue
+        expires = dt_util.parse_datetime(str(cert.get("expires") or ""))
+        if expires is None:
+            continue
+        days = (expires - now).total_seconds() / 86400
+        if days < 0:
+            out.append(f"{cert.get('name')} (expired)")
+        elif days <= CERT_EXPIRY_WARNING_DAYS:
+            out.append(f"{cert.get('name')} (in {int(days)} days)")
+    return out

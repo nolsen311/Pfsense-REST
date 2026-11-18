@@ -88,6 +88,7 @@ def _client():
         "stratum": 2,
         "peers": [],
     }
+    client.get_certificates.return_value = []
     client.get_state_table.return_value = {
         "current": 100,
         "limit": 1000,
@@ -380,3 +381,31 @@ async def test_unsupported_capability_is_not_degraded(hass: HomeAssistant) -> No
     assert status.attributes["checks"]["dhcp"] == KIND_UNSUPPORTED
     assert status.attributes["failing_checks"] == []
     assert not ir.async_get(hass).issues
+
+
+def test_expiring_certificates():
+    """In-use certs within 14 days (or past) are listed; others are not."""
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    from custom_components.pfsense.health import expiring_certificates  # noqa: PLC0415
+
+    now = datetime(2027, 1, 10, tzinfo=UTC)
+    state = {
+        "certificates": [
+            {
+                "name": "GUI",
+                "in_use": "webConfigurator",
+                "expires": "2027-01-18T09:17:33+00:00",
+            },
+            {
+                "name": "Old",
+                "in_use": "OpenVPN",
+                "expires": "2027-01-01T00:00:00+00:00",
+            },
+            {"name": "Unused", "in_use": None, "expires": "2027-01-12T00:00:00+00:00"},
+            {"name": "Far", "in_use": "DNS", "expires": "2035-04-08T03:49:00+00:00"},
+            {"name": "Broken", "in_use": "x", "expires": None},
+        ]
+    }
+    assert expiring_certificates(state, now) == ["GUI (in 8 days)", "Old (expired)"]
+    assert expiring_certificates({}, now) == []

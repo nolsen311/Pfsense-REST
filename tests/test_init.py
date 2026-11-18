@@ -67,6 +67,7 @@ def _full_client_mock():
         "stratum": 2,
         "peers": [],
     }
+    client.get_certificates.return_value = []
     client.get_state_table.return_value = {
         "current": 100,
         "limit": 1000,
@@ -483,6 +484,40 @@ async def test_ntp_unavailable_when_unsupported(hass: HomeAssistant):
     await _setup(hass, entry, client)
     synced = hass.states.get("binary_sensor.router_local_ntp_synchronized")
     assert synced.state == "unavailable"
+
+
+async def test_certificate_sensor_and_repair(hass: HomeAssistant):
+    """A cert expiring soon gets a timestamp sensor and a repair."""
+    from datetime import timedelta  # noqa: PLC0415
+
+    from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
+    from homeassistant.util import dt as dt_util  # noqa: PLC0415
+
+    soon = (dt_util.utcnow() + timedelta(days=5)).replace(microsecond=0)
+    client = _full_client_mock()
+    client.get_certificates.return_value = [
+        {
+            "refid": "abc123",
+            "name": "GUI",
+            "type": "server",
+            "in_use": "webConfigurator",
+            "starts": None,
+            "expires": soon.isoformat(),
+            "issuer": "self-signed",
+            "can_renew": True,
+        }
+    ]
+    entry = _netgate_entry()
+    await _setup(hass, entry, client)
+    state = hass.states.get("sensor.router_local_certificate_gui_expires")
+    assert dt_util.parse_datetime(state.state) == soon
+    assert state.attributes["days_left"] in (4, 5)
+    assert state.attributes["in_use"] == "webConfigurator"
+    issue = ir.async_get(hass).async_get_issue(
+        "pfsense", f"certificate_expiring_{entry.entry_id}"
+    )
+    assert issue is not None
+    assert "GUI (in" in issue.translation_placeholders["certificates"]
 
 
 async def test_state_table_sensors(hass: HomeAssistant):
