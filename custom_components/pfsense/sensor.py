@@ -288,6 +288,21 @@ async def async_setup_entry(  # noqa: C901 - flat per-telemetry-type entity buil
                 entities.append(entity)
 
         entities.extend(
+            PfSenseDynDnsSensor(
+                config_entry,
+                coordinator,
+                SensorEntityDescription(
+                    key=f"dyndns.{entry['id']}",
+                    name=f"Dynamic DNS {entry['hostname'] or entry['id']}",
+                    icon="mdi:dns",
+                ),
+                bool(entry.get("enabled")),
+                entry["id"],
+            )
+            for entry in dict_get(state, "dyndns", None) or []
+        )
+
+        entities.extend(
             PfSenseCertificateSensor(
                 config_entry,
                 coordinator,
@@ -694,6 +709,53 @@ class PfSenseOpenVPNServerSensor(PfSenseSensor):
             return server[prop]
         except KeyError:
             return STATE_UNKNOWN
+
+
+class PfSenseDynDnsSensor(PfSenseSensor):
+    """A dynamic DNS entry: the address it last registered."""
+
+    def __init__(
+        self, config_entry, coordinator, entity_description, enabled, entry_id
+    ):
+        """Initialize the sensor."""
+        super().__init__(config_entry, coordinator, entity_description, enabled)
+        self._entry_id = entry_id
+
+    def _entry(self) -> dict | None:
+        for entry in (self.coordinator.data or {}).get("dyndns") or []:
+            if entry.get("id") == self._entry_id:
+                return entry
+        return None
+
+    @property
+    def available(self) -> bool:
+        """Unavailable once the entry is gone."""
+        return self._entry() is not None and super().available
+
+    @property
+    def native_value(self):
+        """The IPv4 address last registered, else the IPv6 one."""
+        entry = self._entry() or {}
+        return entry.get("ip") or entry.get("ipv6")
+
+    @property
+    def extra_state_attributes(self):
+        """Provider, interface, both addresses and when it last updated."""
+        entry = self._entry() or {}
+        stamp = entry.get("last_update")
+        return {
+            "hostname": entry.get("hostname"),
+            "provider": entry.get("type"),
+            "interface": entry.get("interface"),
+            "description": entry.get("description"),
+            "enabled": entry.get("enabled"),
+            "ipv4": entry.get("ip"),
+            "ipv6": entry.get("ipv6"),
+            "last_update": dt_util.utc_from_timestamp(stamp).isoformat()
+            if stamp
+            else None,
+            "cache_readable": entry.get("cache_readable"),
+        }
 
 
 class PfSenseCertificateSensor(PfSenseSensor):

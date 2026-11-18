@@ -334,6 +334,28 @@ Verified against the live 26.07 box:
     no privilege repair.
   - The sensor keeps the pre-v3 key `notices.pending_notices_present`.
   - Verified on both backends on 2026-11-17 (read-only).
+- **Dynamic DNS** (Netgate only):
+  - `GET /services/dyndns` (`dyndnses`) includes each entry's `username`,
+    `password` (base64) and `updateurl`. `netgate_map.dyndns_entries` copies
+    none of them.
+  - The API's `status` and `ip` fields are **empty** on 26.07, even for an
+    enabled, working entry.
+  - The last update comes from pfSense's cache files instead, which hold
+    `"<ip>|<unix time>"`. All entries are read in one shell call, cached for
+    5 minutes.
+  - File name, from `/etc/inc/dyndns.class`:
+    `/conf/dyndns_<if><type>'<fqdn>'<id>.cache`, with the FQDN in quotes
+    from `escapeshellarg`. The `*-v6` types write `<id>_v6.cache`.
+  - The FQDN is `host.domainname` for providers with a domain (Cloudflare:
+    `@.example.com`), or just `host`.
+  - Cache files of deleted entries stay behind (the live box has a
+    `cloudflare-v6 … 1_v6.cache` with no entry 1), so match by name and
+    never glob.
+  - Without shell access, entries are still listed with
+    `cache_readable: false` and no IP.
+  - pfrest: unsupported.
+  - Verified live (read-only) on 2026-11-17: one Cloudflare entry, IPv4 from
+    2026-10-26.
 - **Firmware install (opt-in, UNVERIFIED):**
   - Netgate entries get an Install button only when the option
     `firmware_install_unverified` (`CONF_FIRMWARE_INSTALL_UNVERIFIED`,

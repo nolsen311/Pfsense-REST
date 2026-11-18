@@ -487,6 +487,56 @@ def installed_packages(body: Any) -> list[dict]:
     return out
 
 
+def dyndns_entries(body: Any) -> list[dict]:
+    """``/services/dyndns`` → entries without credentials.
+
+    ``username``/``password`` (and API tokens in ``updateurl``) are never
+    copied. The API's own ``status``/``ip`` fields are empty on 26.07, so the
+    last update comes from pfSense's cache files (:func:`dyndns_cache_file`).
+    """
+    out = []
+    for entry in _items(body, "dyndnses"):
+        if entry.get("id") in (None, "") or not entry.get("type"):
+            continue
+        host = str(entry.get("host") or "")
+        domain = str(entry.get("domainname") or "")
+        out.append(
+            {
+                "id": str(entry["id"]),
+                "type": entry["type"],
+                "interface": entry.get("interface") or None,
+                "hostname": f"{host}.{domain}" if domain else host,
+                "description": entry.get("descr") or None,
+                "enabled": bool(entry.get("enable")),
+            }
+        )
+    return out
+
+
+def dyndns_cache_file(entry: dict) -> str:
+    """PfSense's cache path for an entry: ``dyndns_<if><type>'<host>'<id>.cache``.
+
+    The host is wrapped in quotes because pfSense builds the name with
+    ``escapeshellarg`` (``dyndns.class``); the IPv6 cache is the same name
+    ending ``<id>_v6.cache``, written by the ``*-v6`` provider types.
+    """
+    return (
+        f"/conf/dyndns_{entry['interface'] or ''}{entry['type']}"
+        f"'{entry['hostname']}'{entry['id']}.cache"
+    )
+
+
+def parse_dyndns_cache(text: str) -> tuple[str | None, int | None]:
+    """``"<ip>|<unix time>"`` → ``(ip, time)``; ``(None, None)`` if empty."""
+    ip, _, stamp = (text or "").strip().partition("|")
+    ip = ip.strip() or None
+    try:
+        when = int(stamp.strip()) if stamp.strip() else None
+    except ValueError:
+        when = None
+    return ip, when
+
+
 def _cert_time(value: Any) -> str | None:
     """``"2027-01-18 09:17:33 +0000 UTC"`` → ISO 8601, or ``None``."""
     text = str(value or "").strip().removesuffix(" UTC").strip()

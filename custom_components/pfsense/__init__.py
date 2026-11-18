@@ -380,6 +380,7 @@ _POLL_READS = (
     ("certificates", "certificates", "get_certificates", []),
     ("state_table", "state_table", "get_state_table", None),
     ("notices", "notices", "get_notices", None),
+    ("dyndns", "dyndns", "get_dyndns", []),
 )
 # Without these the device cannot be identified, so their failure fails the
 # whole poll (and the coordinator falls back to the cache).
