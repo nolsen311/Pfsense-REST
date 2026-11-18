@@ -140,6 +140,10 @@ want in the entity settings.
   15-minute load averages are worked out from per-minute samples. Disk usage
   has no Netgate API source.
 - **DHCP:** total leases, online leases, idle/offline leases.
+- **State table:** current entries, usage % of the limit, and the limit. On
+  the Netgate API, the entries sensor's attributes add NAT states and source
+  and destination IP counts. On the REST API package the values come from
+  `pfctl` through the command endpoint, which needs that privilege.
 - **Per interface:** link status, in/out byte and packet counters (passed
   traffic) plus their kB/s and packets/s rates, interface errors, collisions.
 - **Per gateway:** status, RTT delay, jitter (stddev), packet loss %.
@@ -370,8 +374,8 @@ v3 removes the XML-RPC / `exec_php` transport entirely. On upgrade:
   package. On the Netgate API it's an opt-in, experimental option.
 - **Removed sensors – no REST data source:** memory byte figures
   (physmem/usermem/realmem/swap totals), CPU frequency, per-filesystem usage,
-  system boot time, per-interface *blocked*-traffic counters, pf state-table
-  gauges, and pfBlockerNG block counts.
+  system boot time, per-interface *blocked*-traffic counters, and pfBlockerNG
+  block counts. (The pf state-table sensors came back in v0.12.)
 - **`system_reboot`** no longer supports the `fsck` / `reroot` modes.
 
 ---
