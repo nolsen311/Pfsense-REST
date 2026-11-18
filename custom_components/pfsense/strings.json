@@ -177,6 +177,10 @@
     "pfrest_eol": {
       "title": "{name}: the REST API package is end-of-life",
       "description": "This connection uses the community REST API package, which stops working once Netgate removes PHP from pfSense. This firewall is already running Netgate's built-in API (the Nexus controller), which is the supported replacement.\n\nNothing is broken yet. To switch, open this integration's entry, choose **Reconfigure**, then **Netgate API**. Your entities are kept. Details: {migration_url}"
+    },
+    "certificate_expiring": {
+      "title": "{name}: certificate expiring",
+      "description": "These certificates on the firewall expire soon or have expired: **{certificates}**.\n\nRenew or replace them in System › Certificates, or in Services › ACME for ACME certificates. This notice clears itself once no tracked certificate is within 14 days of expiry."
     }
   }
 }

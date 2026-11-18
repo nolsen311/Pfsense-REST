@@ -4,6 +4,7 @@ import logging
 import re
 
 from homeassistant.components.sensor import (
+    SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
     SensorStateClass,
@@ -12,6 +13,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     PERCENTAGE,
     STATE_UNKNOWN,
+    EntityCategory,
     UnitOfDataRate,
     UnitOfInformation,
     UnitOfTime,
@@ -19,7 +21,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
-from homeassistant.util import slugify
+from homeassistant.util import dt as dt_util, slugify
 
 from . import CoordinatorEntityManager, PfSenseEntity, dict_get
 from .const import (
@@ -284,6 +286,23 @@ async def async_setup_entry(  # noqa: C901 - flat per-telemetry-type entity buil
                     enabled_default,
                 )
                 entities.append(entity)
+
+        entities.extend(
+            PfSenseCertificateSensor(
+                config_entry,
+                coordinator,
+                SensorEntityDescription(
+                    key=f"certificate.{cert['refid']}",
+                    name=f"Certificate {cert['name']} Expires",
+                    icon="mdi:certificate",
+                    device_class=SensorDeviceClass.TIMESTAMP,
+                    entity_category=EntityCategory.DIAGNOSTIC,
+                ),
+                bool(cert.get("in_use")),
+                cert["refid"],
+            )
+            for cert in dict_get(state, "certificates", None) or []
+        )
 
         entities.extend(build_health_sensors(config_entry, coordinator))
         return entities
@@ -675,3 +694,44 @@ class PfSenseOpenVPNServerSensor(PfSenseSensor):
             return server[prop]
         except KeyError:
             return STATE_UNKNOWN
+
+
+class PfSenseCertificateSensor(PfSenseSensor):
+    """When a certificate expires (in-use and server certificates)."""
+
+    def __init__(self, config_entry, coordinator, entity_description, enabled, refid):
+        """Initialize the sensor."""
+        super().__init__(config_entry, coordinator, entity_description, enabled)
+        self._refid = refid
+
+    def _cert(self) -> dict | None:
+        for cert in (self.coordinator.data or {}).get("certificates") or []:
+            if cert.get("refid") == self._refid:
+                return cert
+        return None
+
+    @property
+    def available(self) -> bool:
+        """Unavailable once the certificate is gone."""
+        return self._cert() is not None and super().available
+
+    @property
+    def native_value(self):
+        """The expiry time."""
+        cert = self._cert() or {}
+        return dt_util.parse_datetime(str(cert.get("expires") or ""))
+
+    @property
+    def extra_state_attributes(self):
+        """Days left, usage and issuer."""
+        cert = self._cert() or {}
+        expires = self.native_value
+        days = (expires - dt_util.utcnow()).days if expires else None
+        return {
+            "days_left": days,
+            "in_use": cert.get("in_use"),
+            "type": cert.get("type"),
+            "issuer": cert.get("issuer"),
+            "starts": cert.get("starts"),
+            "can_renew": cert.get("can_renew"),
+        }
