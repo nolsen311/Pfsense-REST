@@ -405,6 +405,23 @@ Verified against the live 26.07 box:
     - The whole sequence runs only on a real upgrade, so it's still
       unverified like the firmware install. `_http(raw=True)` returns bytes
       for 2xx responses.
+- **Diagnostics actions** (Netgate only; `pypfsense/diag.py` parsers;
+  `ServiceRegistrar._register_diagnostics`, `SupportsResponse.ONLY`):
+  - They're **not** routed through entities like the other services. They
+    take an optional `config_entry_id`, required with more than one
+    firewall.
+  - `POST /diag/ping {host, count ≤20, ipv6, source_addr}` returns ping's
+    text in `results`.
+  - `POST /diag/traceroute` **needs `proto` ("ipv4"/"ipv6")**, otherwise 400
+    "invalid protocol ()". It returns the text in `results`. A hop's extra
+    routers are continuation lines. `icmp: true` got no replies (90 s), so
+    it's UDP only.
+  - `POST /diag/testport {host, port, ip_proto}`: open → `{response:
+    "Connection to … succeeded!"}`. Closed → **HTTP 400** `connection to
+    h:p failed (...)` after ~10 s, mapped to `open: false`.
+  - `GET /diag/dns?host=` gives `{results: [{type, data}], timings:
+    [{server, time: "7 msec"}]}`.
+  - Verified live on 2026-11-17. They change nothing on the box.
 - **Firmware install (opt-in, UNVERIFIED):**
   - Netgate entries get an Install button only when the option
     `firmware_install_unverified` (`CONF_FIRMWARE_INSTALL_UNVERIFIED`,

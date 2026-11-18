@@ -66,6 +66,26 @@ class PfSenseBackend(Protocol):
     async def download_config_backup(self, password: str) -> bytes:
         """Return the whole config, encrypted with ``password``."""
 
+    async def ping(
+        self, host: str, count: int = 3, source: str | None = None, ipv6: bool = False
+    ) -> dict:
+        """Ping from the firewall; counts, loss and round-trip times."""
+
+    async def traceroute(
+        self,
+        host: str,
+        max_hops: int = 15,
+        source: str | None = None,
+        ipv6: bool = False,
+    ) -> dict:
+        """Traceroute from the firewall; hops and their replies."""
+
+    async def test_port(self, host: str, port: int, ipv6: bool = False) -> dict:
+        """TCP connect from the firewall; ``open`` true/false."""
+
+    async def dns_lookup(self, host: str) -> dict:
+        """Resolve ``host`` with the firewall's resolvers."""
+
     async def get_dyndns(self) -> list[dict]:
         """Return dynamic DNS entries with ``ip``, ``ipv6`` and ``last_update``."""
 

@@ -282,6 +282,33 @@ On the Netgate API, service control, Wake-on-LAN, `reset_state_table` and
 `exec_command` run through its shell endpoint, because the API has no direct
 equivalent. The user therefore needs shell access.
 
+### Diagnostics actions (Netgate API)
+
+These run a test from the firewall and **return the result** to your script
+or automation (`response_variable`). They change nothing on the firewall.
+They take a `config_entry_id` only if you have more than one firewall.
+
+| Action | Returns |
+| --- | --- |
+| `pfsense.ping` | `reachable`, `transmitted`, `received`, `loss_percent`, `rtt_min_ms` / `rtt_avg_ms` / `rtt_max_ms` / `rtt_stddev_ms`, and the raw `output`. `count` 1–20, optional `source` interface. |
+| `pfsense.traceroute` | `hops`: each with its `replies` (address and times), plus `reached` and `output`. Uses UDP. `max_hops` 1–30; a silent hop takes about 15 s. |
+| `pfsense.test_port` | `open` true/false and the message, for a TCP connection to `host`:`port`. |
+| `pfsense.dns_lookup` | `records` (type and data), and `servers`, each resolver's response time in ms. |
+
+```yaml
+- action: pfsense.ping
+  data:
+    host: 1.1.1.1
+    count: 5
+    source: wan
+  response_variable: wan_ping
+- if: "{{ wan_ping.loss_percent > 20 }}"
+  then:
+    - action: notify.notify
+      data:
+        message: "WAN loss {{ wan_ping.loss_percent }}%, avg {{ wan_ping.rtt_avg_ms }} ms"
+```
+
 ### Example: isolate a device on a security alert
 
 ```yaml

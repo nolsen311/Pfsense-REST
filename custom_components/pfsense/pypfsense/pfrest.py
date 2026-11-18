@@ -306,6 +306,38 @@ class PfRestClient:
         """Not implemented for the REST API package backend."""
         raise PfSenseUnsupportedError("the safe upgrade needs the Netgate API backend")
 
+    async def ping(
+        self, host: str, count: int = 3, source: str | None = None, ipv6: bool = False
+    ) -> dict:
+        """Not implemented for the REST API package backend."""
+        raise PfSenseUnsupportedError(
+            "diagnostics actions need the Netgate API backend"
+        )
+
+    async def traceroute(
+        self,
+        host: str,
+        max_hops: int = 15,
+        source: str | None = None,
+        ipv6: bool = False,
+    ) -> dict:
+        """Not implemented for the REST API package backend."""
+        raise PfSenseUnsupportedError(
+            "diagnostics actions need the Netgate API backend"
+        )
+
+    async def test_port(self, host: str, port: int, ipv6: bool = False) -> dict:
+        """Not implemented for the REST API package backend."""
+        raise PfSenseUnsupportedError(
+            "diagnostics actions need the Netgate API backend"
+        )
+
+    async def dns_lookup(self, host: str) -> dict:
+        """Not implemented for the REST API package backend."""
+        raise PfSenseUnsupportedError(
+            "diagnostics actions need the Netgate API backend"
+        )
+
     async def get_dyndns(self) -> list[dict]:
         """Not implemented for the REST API package backend."""
         raise PfSenseUnsupportedError(
