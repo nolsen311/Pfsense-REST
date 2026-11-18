@@ -573,6 +573,12 @@ which are mutually exclusive on the box:
   `v0.11.0` is the Netgate API backend: Reconfigure, firmware info and an
   opt-in install. It was published as **Latest**, skipping a pre-release
   because the repo has no known users yet.
+  It has **no `pfsense.zip`**: the repo's *immutable releases* setting was
+  on, so release.yml couldn't attach the asset after publishing. The setting
+  is now off. HACS installs from the tag, so nothing needs the zip.
+  `v0.12.0` (Latest) adds the Tier 1 features from roadmap #21: package
+  updates, pending notices, state table, certificate expiry, Dynamic DNS and
+  NTP.
 
 ## Target environment (confirmed)
 
