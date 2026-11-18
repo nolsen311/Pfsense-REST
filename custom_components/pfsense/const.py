@@ -114,6 +114,26 @@ SENSOR_TYPES: Final[dict[str, SensorEntityDescription]] = {
         icon=ICON_MEMORY,
         state_class=SensorStateClass.MEASUREMENT,
     ),
+    "state_table.current": SensorEntityDescription(
+        key="state_table.current",
+        name="State Table Entries",
+        native_unit_of_measurement=COUNT,
+        icon="mdi:table-network",
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    "state_table.used_percent": SensorEntityDescription(
+        key="state_table.used_percent",
+        name="State Table Usage",
+        native_unit_of_measurement=PERCENTAGE,
+        icon="mdi:table-network",
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    "state_table.limit": SensorEntityDescription(
+        key="state_table.limit",
+        name="State Table Limit",
+        native_unit_of_measurement=COUNT,
+        icon="mdi:table-network",
+    ),
     "telemetry.cpu.used_percent": SensorEntityDescription(
         key="telemetry.cpu.used_percent",
         name="CPU Usage",

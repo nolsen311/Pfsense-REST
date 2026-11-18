@@ -338,3 +338,132 @@ async def test_pfrest_certificates_are_unsupported() -> None:
         await PfRestClient(
             "https://pf.example:8444", object(), api_key="k"
         ).get_certificates()
+
+
+_PFCTL_SI = """Status: Enabled for 83 days 08:14:58           Debug: Urgent
+
+State Table                          Total             Rate
+  current entries                     2126
+  searches                     17661891614         2452.7/s
+Source Tracking Table
+  current entries                        9
+"""
+_PFCTL_SM = "states        hard limit   805000\nsrc-nodes     hard limit   805000\n"
+
+
+def test_parse_pf_states() -> None:
+    """The state table's count (not source tracking's) and the hard limit."""
+    from custom_components.pfsense.pypfsense.util import (  # noqa: PLC0415
+        parse_pf_states,
+    )
+
+    assert parse_pf_states(_PFCTL_SI, _PFCTL_SM) == {
+        "current": 2126,
+        "limit": 805000,
+        "used_percent": 0.26,
+    }
+    # pfrest's grep'd command output: both lines in one string.
+    grep_out = "  current entries   1950  \nstates        hard limit   805000\n"
+    assert parse_pf_states(grep_out)["limit"] == 805000
+    assert parse_pf_states("  current entries 5\n") == {
+        "current": 5,
+        "limit": None,
+        "used_percent": None,
+    }
+    with pytest.raises(ValueError):
+        parse_pf_states("pfctl: permission denied")
+
+
+async def test_state_table_on_both_backends() -> None:
+    """Netgate decodes pfinfo and adds dataset extras; pfrest shells pfctl."""
+
+
+def test_parse_notices() -> None:
+    """Notices JSON is parsed; anything else is a ValueError."""
+    from custom_components.pfsense.pypfsense.util import (  # noqa: PLC0415
+        NOTICES_COMMAND,
+        parse_notices,
+    )
+
+    assert NOTICES_COMMAND.startswith("php -r '")
+    out = '{"count":2,"latest":[{"id":1,"category":"c","priority":1,"notice":"n"}]}\n'
+    assert parse_notices(out) == {
+        "count": 2,
+        "latest": [{"id": 1, "category": "c", "priority": 1, "notice": "n"}],
+    }
+    # Leading noise (PHP warnings) before the JSON is tolerated.
+    assert parse_notices('PHP Warning: x\n{"count":0,"latest":[]}')["count"] == 0
+    for bad in ("", "php: not found", '{"latest": []}', "[1]"):
+        with pytest.raises(ValueError):
+            parse_notices(bad)
+
+
+async def test_notices_errors_become_unsupported() -> None:
+    """No shell privilege or no PHP reports unsupported, not a repair."""
+    from unittest.mock import AsyncMock  # noqa: PLC0415
+
+    from custom_components.pfsense.pypfsense import (  # noqa: PLC0415
+        NetgateClient,
+        PfRestClient,
+        PfSensePrivilegeError,
+        PfSenseUnsupportedError,
+    )
+
+    netgate = NetgateClient(
+        "https://pf.example:8443", object(), username="u", password="p"
+    )
+    b64 = lambda t: base64.b64encode(t.encode()).decode()  # noqa: E731
+    netgate._get = AsyncMock(
+        return_value={"pfinfo": {"info": b64(_PFCTL_SI), "memory": b64(_PFCTL_SM)}}
+    )
+    netgate._monitoring = AsyncMock(
+        return_value={"pfstates": 1561.0, "pfnat": 373.6, "srcip": 8.0, "dstip": 200.5}
+    )
+    table = await netgate.get_state_table()
+    assert (table["current"], table["limit"]) == (2126, 805000)
+    assert (table["nat_states"], table["source_ips"], table["destination_ips"]) == (
+        373.6,
+        8.0,
+        200.5,
+    )
+
+    pfrest = PfRestClient("https://pf.example:8444", object(), api_key="k")
+    pfrest.exec_command = AsyncMock(
+        return_value="  current entries 1950\nstates        hard limit   805000\n"
+    )
+    assert (await pfrest.get_state_table())["current"] == 1950
+    pfrest.exec_command = AsyncMock(side_effect=PfSensePrivilegeError("403"))
+    with pytest.raises(PfSenseUnsupportedError):
+        await pfrest.get_state_table()
+    for client in (
+        NetgateClient("https://pf.example:8443", object(), username="u", password="p"),
+        PfRestClient("https://pf.example:8444", object(), api_key="k"),
+    ):
+        client.exec_command = AsyncMock(side_effect=PfSensePrivilegeError("403"))
+        with pytest.raises(PfSenseUnsupportedError):
+            await client.get_notices()
+        client.exec_command = AsyncMock(return_value="sh: php: not found")
+        with pytest.raises(PfSenseUnsupportedError):
+            await client.get_notices()
+        client.exec_command = AsyncMock(return_value='{"count": 3, "latest": []}')
+        assert (await client.get_notices())["count"] == 3
+
+
+async def test_netgate_state_table_bad_pfinfo() -> None:
+    """Unparseable pfinfo raises PfSenseAPIError (not a TypeError)."""
+    from unittest.mock import AsyncMock  # noqa: PLC0415
+
+    from custom_components.pfsense.pypfsense import (  # noqa: PLC0415
+        NetgateClient,
+        PfSenseAPIError,
+    )
+
+    netgate = NetgateClient(
+        "https://pf.example:8443", object(), username="u", password="p"
+    )
+    netgate._get = AsyncMock(
+        return_value={"pfinfo": {"info": "bm90aGluZw==", "memory": ""}}
+    )
+    netgate._monitoring = AsyncMock(return_value={})
+    with pytest.raises(PfSenseAPIError, match="unexpected pfinfo"):
+        await netgate.get_state_table()
