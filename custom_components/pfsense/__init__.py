@@ -42,11 +42,13 @@ from .const import (
     LOADED_PLATFORMS,
     PFSENSE_CLIENT,
     PLATFORMS,
+    SAFE_UPGRADE,
     SHOULD_RELOAD,
     UNDO_UPDATE_LISTENER,
 )
 from .health import HealthTracker, async_clear_issues, async_sync_issues, classify
 from .pypfsense import (
+    BACKEND_NETGATE,
     BACKEND_PFREST,
     CONF_BACKEND,
     PfSenseAuthError,
@@ -285,13 +287,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     undo_listener = entry.add_update_listener(_async_update_listener)
 
+    safe_upgrade = None
+    undo = [undo_listener]
+    if entry.data.get(CONF_BACKEND) == BACKEND_NETGATE:
+        from .safe_upgrade import SafeUpgrade  # noqa: PLC0415 - Netgate only
+
+        safe_upgrade = SafeUpgrade(hass, entry, lambda: client)
+        await safe_upgrade.async_load()
+        undo.append(
+            coordinator.async_add_listener(
+                lambda: safe_upgrade.async_on_poll(coordinator.data)
+            )
+        )
+
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {
         COORDINATOR: coordinator,
         HEALTH: health,
         DEVICE_TRACKER_COORDINATOR: device_tracker_coordinator,
         PFSENSE_CLIENT: client,
-        UNDO_UPDATE_LISTENER: [undo_listener],
+        SAFE_UPGRADE: safe_upgrade,
+        UNDO_UPDATE_LISTENER: undo,
         LOADED_PLATFORMS: platforms,
     }
 

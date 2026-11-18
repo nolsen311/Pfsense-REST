@@ -49,6 +49,7 @@ LOADED_PLATFORMS = "loaded_platforms"
 PFSENSE_CLIENT = "pfsense_client"
 COORDINATOR = "coordinator"
 HEALTH = "health"
+SAFE_UPGRADE = "safe_upgrade"
 DEVICE_TRACKER_COORDINATOR = "device_tracker_coordinator"
 SHOULD_RELOAD = "should_reload"
 TRACKED_MACS = "tracked_macs"
@@ -75,6 +76,15 @@ DEFAULT_RULE_SWITCH_KILL_STATES = False
 # this option once a real upgrade has been confirmed.
 CONF_FIRMWARE_INSTALL_UNVERIFIED = "firmware_install_unverified"
 DEFAULT_FIRMWARE_INSTALL_UNVERIFIED = False
+# Safe firmware upgrade (Netgate's advice): snapshot, encrypted config backup,
+# remove add-on packages, upgrade, reinstall them.
+CONF_FIRMWARE_SAFE_UPGRADE = "firmware_safe_upgrade"
+DEFAULT_FIRMWARE_SAFE_UPGRADE = False
+CONF_FIRMWARE_BACKUP_PASSWORD = "firmware_backup_password"
+CONF_FIRMWARE_KEEP_PACKAGES = "firmware_keep_packages"
+DEFAULT_FIRMWARE_KEEP_PACKAGES = "Nexus, Netgate_Firmware_Upgrade"
+# Never removed: Nexus is the API Home Assistant is talking to.
+ALWAYS_KEEP_PACKAGES = frozenset({"Nexus"})
 
 COUNT = "count"
 

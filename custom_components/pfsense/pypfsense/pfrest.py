@@ -266,7 +266,7 @@ class PfRestClient:
             "firmware upgrade is not supported by the REST API package backend"
         )
 
-    async def get_installed_packages(self) -> list[dict]:
+    async def get_installed_packages(self, refresh: bool = False) -> list[dict]:
         """Not available from the REST API package.
 
         ``/system/packages`` 500s even with packages installed
@@ -293,6 +293,18 @@ class PfRestClient:
         raise PfSenseUnsupportedError(
             "boot environments are only available on the Netgate API backend"
         )
+
+    async def remove_package(self, package: str) -> None:
+        """Not implemented for the REST API package backend."""
+        raise PfSenseUnsupportedError("the safe upgrade needs the Netgate API backend")
+
+    async def install_packages(self, packages: list[str]) -> None:
+        """Not implemented for the REST API package backend."""
+        raise PfSenseUnsupportedError("the safe upgrade needs the Netgate API backend")
+
+    async def download_config_backup(self, password: str) -> bytes:
+        """Not implemented for the REST API package backend."""
+        raise PfSenseUnsupportedError("the safe upgrade needs the Netgate API backend")
 
     async def get_dyndns(self) -> list[dict]:
         """Not implemented for the REST API package backend."""

@@ -20,6 +20,11 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import AbortFlow
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers.selector import (
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
+)
 from homeassistant.util import slugify
 
 from .const import (
@@ -33,12 +38,17 @@ from .const import (
     CONF_DEVICE_TRACKER_ENABLED,
     CONF_DEVICE_TRACKER_SCAN_INTERVAL,
     CONF_DEVICES,
+    CONF_FIRMWARE_BACKUP_PASSWORD,
     CONF_FIRMWARE_INSTALL_UNVERIFIED,
+    CONF_FIRMWARE_KEEP_PACKAGES,
+    CONF_FIRMWARE_SAFE_UPGRADE,
     CONF_RULE_SWITCH_KILL_STATES,
     DEFAULT_DEVICE_TRACKER_CONSIDER_HOME,
     DEFAULT_DEVICE_TRACKER_ENABLED,
     DEFAULT_DEVICE_TRACKER_SCAN_INTERVAL,
     DEFAULT_FIRMWARE_INSTALL_UNVERIFIED,
+    DEFAULT_FIRMWARE_KEEP_PACKAGES,
+    DEFAULT_FIRMWARE_SAFE_UPGRADE,
     DEFAULT_RULE_SWITCH_KILL_STATES,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_VERIFY_SSL,
@@ -347,11 +357,23 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input=None):
         """Handle the options form."""
+        errors: dict[str, str] = {}
         if user_input is not None:
-            if user_input.get(CONF_DEVICE_TRACKER_ENABLED):
+            user_input = dict(user_input)
+            # The password field is never pre-filled: blank keeps the stored one.
+            if not user_input.get(CONF_FIRMWARE_BACKUP_PASSWORD):
+                user_input.pop(CONF_FIRMWARE_BACKUP_PASSWORD, None)
+                if old := self.config_entry.options.get(CONF_FIRMWARE_BACKUP_PASSWORD):
+                    user_input[CONF_FIRMWARE_BACKUP_PASSWORD] = old
+            if user_input.get(CONF_FIRMWARE_SAFE_UPGRADE) and not user_input.get(
+                CONF_FIRMWARE_BACKUP_PASSWORD
+            ):
+                errors[CONF_FIRMWARE_BACKUP_PASSWORD] = "backup_password_required"
+            elif user_input.get(CONF_DEVICE_TRACKER_ENABLED):
                 self.new_options = user_input
                 return await self.async_step_device_tracker()
-            return self.async_create_entry(title="", data=user_input)
+            else:
+                return self.async_create_entry(title="", data=user_input)
 
         opts = self.config_entry.options
         base_schema = {
@@ -397,7 +419,28 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     ),
                 )
             ] = bool
-        return self.async_show_form(step_id="init", data_schema=vol.Schema(base_schema))
+            base_schema[
+                vol.Optional(
+                    CONF_FIRMWARE_SAFE_UPGRADE,
+                    default=opts.get(
+                        CONF_FIRMWARE_SAFE_UPGRADE, DEFAULT_FIRMWARE_SAFE_UPGRADE
+                    ),
+                )
+            ] = bool
+            base_schema[vol.Optional(CONF_FIRMWARE_BACKUP_PASSWORD)] = TextSelector(
+                TextSelectorConfig(type=TextSelectorType.PASSWORD)
+            )
+            base_schema[
+                vol.Optional(
+                    CONF_FIRMWARE_KEEP_PACKAGES,
+                    default=opts.get(
+                        CONF_FIRMWARE_KEEP_PACKAGES, DEFAULT_FIRMWARE_KEEP_PACKAGES
+                    ),
+                )
+            ] = str
+        return self.async_show_form(
+            step_id="init", data_schema=vol.Schema(base_schema), errors=errors
+        )
 
     async def async_step_device_tracker(self, user_input=None):
         """Let the user pick which MACs to track from the live ARP table."""

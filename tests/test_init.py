@@ -666,3 +666,46 @@ async def test_boot_environment_sensor(hass: HomeAssistant):
     assert state.attributes["count"] == 2
     assert state.attributes["environments"][1]["protected"] is True
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.asyncio
+async def test_safe_upgrade_install_routes_through_manager(hass: HomeAssistant):
+    """With safe upgrade on, Install starts the sequence, not a bare upgrade."""
+    client = _full_client_mock()
+    client.get_firmware_update_info.return_value = _UPDATE_INFO
+    entry = _netgate_entry(
+        {
+            "firmware_install_unverified": True,
+            "firmware_safe_upgrade": True,
+            "firmware_backup_password": "pw",
+        }
+    )
+    await _setup(hass, entry, client)
+    manager = hass.data[DOMAIN][entry.entry_id]["safe_upgrade"]
+    with patch.object(manager, "async_start", AsyncMock()) as start:
+        await hass.services.async_call(
+            "update", "install", {"entity_id": UPDATE_ENTITY}, blocking=True
+        )
+    start.assert_awaited_once_with("26.07")
+    client.start_firmware_update.assert_not_awaited()
+    assert (
+        "Safe upgrade is on"
+        in hass.states.get(UPDATE_ENTITY).attributes["release_summary"]
+    )
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_redact_backup_password(hass: HomeAssistant):
+    """The config backup password never appears in diagnostics."""
+    from custom_components.pfsense.diagnostics import (  # noqa: PLC0415
+        async_get_config_entry_diagnostics,
+    )
+
+    client = _full_client_mock()
+    entry = _netgate_entry({"firmware_backup_password": "s3cret"})
+    await _setup(hass, entry, client)
+    diag = await async_get_config_entry_diagnostics(hass, entry)
+    assert diag["entry"]["options"]["firmware_backup_password"] == "**REDACTED**"
+    assert "s3cret" not in repr(diag)
+    assert await hass.config_entries.async_unload(entry.entry_id)

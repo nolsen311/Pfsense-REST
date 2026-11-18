@@ -21,9 +21,12 @@ from homeassistant.util import slugify
 from . import CoordinatorEntityManager, PfSenseEntity, dict_get
 from .const import (
     CONF_FIRMWARE_INSTALL_UNVERIFIED,
+    CONF_FIRMWARE_SAFE_UPGRADE,
     COORDINATOR,
     DEFAULT_FIRMWARE_INSTALL_UNVERIFIED,
+    DEFAULT_FIRMWARE_SAFE_UPGRADE,
     DOMAIN,
+    SAFE_UPGRADE,
 )
 from .pypfsense import BACKEND_NETGATE, CONF_BACKEND, PfSenseError
 
@@ -36,6 +39,11 @@ UNVERIFIED_SUMMARY = (
     "Experimental: installing from Home Assistant has not been verified on "
     "hardware yet. The firewall reboots during the upgrade, and Home Assistant "
     "loses its connection until it is back."
+)
+SAFE_UPGRADE_SUMMARY = (
+    "Safe upgrade is on: Install takes a boot environment snapshot, saves an "
+    "encrypted config backup in Home Assistant, removes the add-on packages "
+    "(except the keep list), upgrades, then reinstalls them."
 )
 
 
@@ -190,13 +198,37 @@ class PfSenseFirmwareUpdatesAvailableUpdate(PfSenseUpdate):
         return UpdateEntityFeature(0)
 
     @property
+    def _safe_upgrade(self):
+        """The safe-upgrade manager when that option is on, else ``None``."""
+        if not self.config_entry.options.get(
+            CONF_FIRMWARE_SAFE_UPGRADE, DEFAULT_FIRMWARE_SAFE_UPGRADE
+        ):
+            return None
+        data = self.hass.data[DOMAIN].get(self.config_entry.entry_id) or {}
+        return data.get(SAFE_UPGRADE)
+
+    async def async_added_to_hass(self) -> None:
+        """Also refresh when the safe upgrade moves on a stage."""
+        await super().async_added_to_hass()
+        data = self.hass.data[DOMAIN].get(self.config_entry.entry_id) or {}
+        if (manager := data.get(SAFE_UPGRADE)) is not None:
+            self.async_on_remove(manager.async_add_listener(self.async_write_ha_state))
+
+    @property
     def release_summary(self) -> str | None:
         """Warn next to the Install button while the path is unverified."""
-        return UNVERIFIED_SUMMARY if self._install_allowed else None
+        if not self._install_allowed:
+            return None
+        if self._safe_upgrade is not None:
+            return f"{UNVERIFIED_SUMMARY} {SAFE_UPGRADE_SUMMARY}"
+        return UNVERIFIED_SUMMARY
 
     @property
     def in_progress(self):
         """Installing until the installed version changes (or it times out)."""
+        manager = self._safe_upgrade
+        if manager is not None and manager.plan is not None:
+            return manager.in_progress
         if self._installing_from is None:
             return False
         if (
@@ -220,6 +252,12 @@ class PfSenseFirmwareUpdatesAvailableUpdate(PfSenseUpdate):
             self.installed_version,
             self.config_entry.title,
         )
+        if (manager := self._safe_upgrade) is not None:
+            # Snapshot, backup, remove packages, upgrade, reinstall: in the
+            # background, since it spans the firewall's reboot.
+            await manager.async_start(self.installed_version)
+            self.async_write_ha_state()
+            return
         if backup:
             await _snapshot_before_install(self._get_pfsense_client())
         try:
@@ -236,6 +274,9 @@ class PfSenseFirmwareUpdatesAvailableUpdate(PfSenseUpdate):
         state = self.coordinator.data
         attrs = {}
         info = dict_get(state, "firmware_update_info.base", {})
+
+        if (manager := self._safe_upgrade) is not None and manager.plan:
+            attrs.update(manager.attributes())
 
         if not info:
             return attrs
