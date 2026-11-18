@@ -51,6 +51,12 @@ class PfSenseBackend(Protocol):
     async def get_dns_servers(self) -> list[str]:
         """Return the configured system DNS servers."""
 
+    async def get_boot_environments(self) -> list[dict]:
+        """Return boot environments (name, version, active, next_boot, ...)."""
+
+    async def create_boot_environment(self) -> str | None:
+        """Snapshot the running system as a new boot environment."""
+
     async def get_dyndns(self) -> list[dict]:
         """Return dynamic DNS entries with ``ip``, ``ipv6`` and ``last_update``."""
 

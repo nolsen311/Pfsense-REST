@@ -59,6 +59,7 @@ def _full_client_mock():
     client.get_nat_outbound_rules.return_value = []
     client.get_firmware_update_info.return_value = None
     client.get_installed_packages.return_value = []
+    client.get_boot_environments.return_value = []
     client.get_dyndns.return_value = []
     client.get_ntp_status.return_value = {
         "enabled": True,
@@ -566,4 +567,102 @@ async def test_state_table_sensors(hass: HomeAssistant):
     assert entries.attributes["nat_states"] == 373.6
     assert "source_ips" not in entries.attributes
     assert hass.states.get("sensor.router_local_state_table_usage").state == "0.26"
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+_PKG_WITH_UPDATE = [
+    {
+        "name": "System_Patches",
+        "package": "pfSense-pkg-System_Patches",
+        "installed_version": "2.3.5_1",
+        "latest_version": "2.3.6",
+        "update_available": True,
+    }
+]
+
+
+@pytest.mark.asyncio
+async def test_install_backs_up_first(hass: HomeAssistant):
+    """Back up first: a boot environment snapshot is taken before installing."""
+    from unittest.mock import call  # noqa: PLC0415
+
+    client = _full_client_mock()
+    client.get_installed_packages.return_value = _PKG_WITH_UPDATE
+    order = AsyncMock()
+    order.snapshot.return_value = "quick-20261117165509"
+    client.create_boot_environment = order.snapshot
+    client.install_package_update = order.install
+    entry = _netgate_entry()
+    await _setup(hass, entry, client)
+    assert (
+        hass.states.get(PKG_ENTITY).attributes["supported_features"]
+        & UpdateEntityFeature.BACKUP
+    )
+    await hass.services.async_call(
+        "update", "install", {"entity_id": PKG_ENTITY, "backup": True}, blocking=True
+    )
+    assert order.mock_calls == [call.snapshot(), call.install("System_Patches")]
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.asyncio
+async def test_failed_snapshot_blocks_install(hass: HomeAssistant):
+    """If the boot environment can't be created, nothing is installed."""
+    from custom_components.pfsense.pypfsense import PfSenseAPIError  # noqa: PLC0415
+    from homeassistant.exceptions import HomeAssistantError  # noqa: PLC0415
+
+    client = _full_client_mock()
+    client.get_installed_packages.return_value = _PKG_WITH_UPDATE
+    client.create_boot_environment.side_effect = PfSenseAPIError(500, "", "zfs full")
+    entry = _netgate_entry()
+    await _setup(hass, entry, client)
+    with pytest.raises(HomeAssistantError, match="nothing was installed"):
+        await hass.services.async_call(
+            "update",
+            "install",
+            {"entity_id": PKG_ENTITY, "backup": True},
+            blocking=True,
+        )
+    client.install_package_update.assert_not_awaited()
+    # Without backup, no snapshot is taken.
+    client.create_boot_environment.reset_mock()
+    await hass.services.async_call(
+        "update", "install", {"entity_id": PKG_ENTITY}, blocking=True
+    )
+    client.create_boot_environment.assert_not_awaited()
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.asyncio
+async def test_boot_environment_sensor(hass: HomeAssistant):
+    """The active environment is the state; all of them are attributes."""
+    client = _full_client_mock()
+    client.get_boot_environments.return_value = [
+        {
+            "name": "new",
+            "version": "26.07",
+            "active": True,
+            "next_boot": True,
+            "created": "2026-08-15T07:20:06+00:00",
+            "used_bytes": 2296274944,
+            "protected": False,
+        },
+        {
+            "name": "old",
+            "version": "26.03.1",
+            "active": False,
+            "next_boot": False,
+            "created": "2026-06-03T14:49:55+00:00",
+            "used_bytes": 1003520,
+            "protected": True,
+        },
+    ]
+    entry = _netgate_entry()
+    await _setup(hass, entry, client)
+    state = hass.states.get("sensor.router_local_boot_environment")
+    assert state.state == "new"
+    assert state.attributes["version"] == "26.07"
+    assert state.attributes["next_boot"] == "new"
+    assert state.attributes["count"] == 2
+    assert state.attributes["environments"][1]["protected"] is True
     assert await hass.config_entries.async_unload(entry.entry_id)

@@ -80,6 +80,7 @@ def _client():
     client.get_nat_outbound_rules.return_value = []
     client.get_firmware_update_info.return_value = None
     client.get_installed_packages.return_value = []
+    client.get_boot_environments.return_value = []
     client.get_dyndns.return_value = []
     client.get_ntp_status.return_value = {
         "enabled": True,

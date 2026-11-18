@@ -757,3 +757,66 @@ def test_certificates_keep_safe_fields_only():
     assert certs[1]["in_use"] == "DNS Resolver"
     flat = repr(certs)
     assert "SECRET" not in flat and "BODY" not in flat and "CSR" not in flat
+
+
+def test_boot_environments():
+    """Newest first; times, sizes and the '-' description normalised."""
+    body = {
+        "envs": {
+            "a": {
+                "name": "a",
+                "version": "26.03.1",
+                "creation": "1780523395",
+                "used": "1003520",
+                "active": False,
+                "nextboot": False,
+                "descr": "-",
+                "protect": True,
+            },
+            "b": {
+                "name": "b",
+                "version": "26.07",
+                "creation": "1786803606",
+                "used": "2296274944",
+                "active": True,
+                "nextboot": True,
+                "descr": "before 26.07",
+                "lastbooted_nice": "2026-08-26 08:14",
+            },
+            "c": {"creation": "bad", "used": ""},
+        }
+    }
+    envs = nm.boot_environments(body)
+    assert [e["name"] for e in envs] == ["b", "a", "c"]
+    assert envs[0]["created"] == "2026-08-15T14:20:06+00:00"
+    assert (envs[0]["active"], envs[0]["next_boot"], envs[0]["used_bytes"]) == (
+        True,
+        True,
+        2296274944,
+    )
+    assert envs[0]["description"] == "before 26.07"
+    assert envs[1]["description"] is None and envs[1]["protected"] is True
+    assert envs[2]["created"] is None and envs[2]["used_bytes"] is None
+    assert nm.boot_environments({}) == []
+
+
+async def test_create_boot_environment_posts_quick_and_drops_cache():
+    """The snapshot is POST /system/bootenv/quick, and the list is re-read after."""
+    from unittest.mock import AsyncMock  # noqa: PLC0415
+
+    from custom_components.pfsense.pypfsense import NetgateClient  # noqa: PLC0415
+
+    client = NetgateClient(
+        "https://pf.example:8443", object(), username="u", password="p"
+    )
+    client._get = AsyncMock(return_value={"envs": {}})
+    client._request = AsyncMock(return_value={"name": "quick-20261117165509"})
+    await client.get_boot_environments()
+    await client.get_boot_environments()
+    assert client._get.await_count == 1
+    assert await client.create_boot_environment() == "quick-20261117165509"
+    client._request.assert_awaited_once_with(
+        "POST", "/system/bootenv/quick", payload={}
+    )
+    await client.get_boot_environments()
+    assert client._get.await_count == 2

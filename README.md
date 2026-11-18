@@ -217,6 +217,14 @@ want in the entity settings.
   renewed. The list is read once an hour. Private keys are never read into
   Home Assistant.
 
+- **Boot Environment** (Netgate API, diagnostic): the boot environment
+  pfSense is running. The attributes give its version, which one boots next,
+  and every environment (version, created, size, protected).
+- **Back up first**: the firmware and package Install dialogs offer it on the
+  Netgate API. It snapshots a boot environment (System › Boot Environments)
+  before upgrading, so a bad upgrade can be rolled back from the console or
+  GUI. If the snapshot fails, nothing is installed.
+
 ### Health (diagnostic)
 
 Shown under the device's **Diagnostic** section, and they stay available while

@@ -173,6 +173,7 @@ class NetgateClient:
         self._upgrade_from: str | None = None
         self._packages: tuple[float, list[dict]] | None = None
         self._dyndns: tuple[float, list[dict]] | None = None
+        self._boot_envs: tuple[float, list[dict]] | None = None
         self._certificates: tuple[float, list[dict]] | None = None
         self._package_upgrading: dict[str, str] = {}
 
@@ -560,6 +561,28 @@ class NetgateClient:
             )
         self._package_upgrading[name] = pkg["installed_version"]
         self._packages = None
+
+    async def get_boot_environments(self) -> list[dict]:
+        """Boot environments, newest first, cached for 5 minutes."""
+        now = time.monotonic()
+        if self._boot_envs and now - self._boot_envs[0] < DYNDNS_TTL:
+            return self._boot_envs[1]
+        envs = netgate_map.boot_environments(await self._get("/system/bootenv"))
+        self._boot_envs = (now, envs)
+        return envs
+
+    async def create_boot_environment(self) -> str | None:
+        """Snapshot the running system as a new boot environment; return its name.
+
+        ``POST /system/bootenv/quick`` returns ``{"name": "quick-<YYYYmmddHHMMSS>"}``
+        within ~6 s (a ZFS clone, ~24 KB at first; verified 2026-11-17). It
+        doesn't change the active or next-boot environment. Used as the
+        "back up first" step before an upgrade.
+        """
+        async with self._write_lock:
+            body = await self._request("POST", "/system/bootenv/quick", payload={})
+        self._boot_envs = None
+        return body.get("name") if isinstance(body, dict) else None
 
     async def get_dyndns(self) -> list[dict]:
         """Dynamic DNS entries with their last update, cached for 5 minutes.
