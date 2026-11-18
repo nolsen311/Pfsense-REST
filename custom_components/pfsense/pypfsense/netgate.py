@@ -36,13 +36,14 @@ import contextlib
 import ipaddress
 import json
 import logging
+import re
 import time
 from typing import Any
 from urllib.parse import quote, urlparse
 
 import aiohttp
 
-from . import netgate_map
+from . import diag, netgate_map
 from .errors import (
     PfSenseAPIError,
     PfSenseAuthError,
@@ -76,6 +77,7 @@ UPDATE_INFO_TTL = 3600.0
 # new version is noticed soon after the reboot.
 DYNDNS_TTL = 300
 BACKUP_HEADER = b"---- BEGIN config.xml ----"
+_PORT_CLOSED = re.compile(r"^connection to \S+ failed")
 UPDATE_INFO_TTL_UPGRADING = 60.0
 
 
@@ -641,6 +643,81 @@ class NetgateClient:
         if not isinstance(data, bytes) or not data.startswith(BACKUP_HEADER):
             raise PfSenseAPIError(0, "", "the config backup is not an encrypted backup")
         return data
+
+    # ------------------------------------------------------- diagnostics
+    # These send test traffic from the firewall; none changes its config.
+
+    async def ping(
+        self, host: str, count: int = 3, source: str | None = None, ipv6: bool = False
+    ) -> dict:
+        """``POST /diag/ping``; the API caps ``count`` at 20."""
+        body = await self._request(
+            "POST",
+            "/diag/ping",
+            payload={
+                "host": host,
+                "count": max(1, min(count, 20)),
+                "ipv6": ipv6,
+                "source_addr": source or "",
+            },
+            timeout=60 + 2 * count,
+        )
+        return diag.parse_ping(host, (body or {}).get("results") or "")
+
+    async def traceroute(
+        self,
+        host: str,
+        max_hops: int = 15,
+        source: str | None = None,
+        ipv6: bool = False,
+    ) -> dict:
+        """``POST /diag/traceroute`` over UDP (``proto`` is required).
+
+        A silent hop costs ~15 s (3 probes, 5 s each), so the timeout scales
+        with ``max_hops``. ICMP mode got no replies at all on the test box.
+        """
+        hops = max(1, min(max_hops, 30))
+        body = await self._request(
+            "POST",
+            "/diag/traceroute",
+            payload={
+                "host": host,
+                "hops": hops,
+                "proto": "ipv6" if ipv6 else "ipv4",
+                "src": source or "any",
+            },
+            timeout=30 + 16 * hops,
+        )
+        return diag.parse_traceroute(host, (body or {}).get("results") or "")
+
+    async def test_port(self, host: str, port: int, ipv6: bool = False) -> dict:
+        """``POST /diag/testport`` (TCP connect).
+
+        A refused or timed-out connection comes back as HTTP 400
+        ``connection to <host>:<port> failed (...)``; that is a result
+        (``open: false``), not an error.
+        """
+        try:
+            body = await self._request(
+                "POST",
+                "/diag/testport",
+                payload={
+                    "host": host,
+                    "port": port,
+                    "ip_proto": "ipv6" if ipv6 else "ipv4",
+                },
+                timeout=60,
+            )
+        except PfSenseAPIError as err:
+            if not _PORT_CLOSED.search(err.message or ""):
+                raise
+            return {"host": host, "port": port, "open": False, "message": err.message}
+        message = str((body or {}).get("response") or "").strip()
+        return {"host": host, "port": port, "open": True, "message": message}
+
+    async def dns_lookup(self, host: str) -> dict:
+        """``GET /diag/dns?host=``: records and each resolver's response time."""
+        return diag.parse_dns(host, await self._get("/diag/dns", host=host))
 
     async def get_dyndns(self) -> list[dict]:
         """Dynamic DNS entries with their last update, cached for 5 minutes.

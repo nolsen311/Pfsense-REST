@@ -4,7 +4,14 @@ import logging
 
 import voluptuous as vol
 
-from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.core import (
+    HomeAssistant,
+    ServiceCall,
+    ServiceResponse,
+    SupportsResponse,
+    callback,
+)
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import async_get_platforms
@@ -12,6 +19,7 @@ from homeassistant.helpers.service import entity_service_call
 
 from .const import (
     DOMAIN,
+    PFSENSE_CLIENT,
     SERVICE_EXEC_COMMAND,
     SERVICE_KILL_STATES,
     SERVICE_RESET_STATE_TABLE,
@@ -23,6 +31,7 @@ from .const import (
     SERVICE_SYSTEM_HALT,
     SERVICE_SYSTEM_REBOOT,
 )
+from .pypfsense import PfSenseError, PfSenseUnsupportedError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -201,3 +210,94 @@ class ServiceRegistrar:
             ),
             service_func=_async_send_service,
         )
+
+        self._register_diagnostics()
+
+    @callback
+    def _register_diagnostics(self) -> None:
+        """Ping, traceroute, test_port, dns_lookup: actions that return results."""
+        target = {vol.Optional("config_entry_id"): cv.string}
+        host = {vol.Required("host"): cv.string}
+        ipv6 = {vol.Optional("ipv6", default=False): cv.boolean}
+        source = {vol.Optional("source"): cv.string}
+        actions = {
+            "ping": (
+                {
+                    **target,
+                    **host,
+                    **ipv6,
+                    **source,
+                    vol.Optional("count", default=3): vol.All(
+                        vol.Coerce(int), vol.Range(min=1, max=20)
+                    ),
+                },
+                lambda c, d: c.ping(d["host"], d["count"], d.get("source"), d["ipv6"]),
+            ),
+            "traceroute": (
+                {
+                    **target,
+                    **host,
+                    **ipv6,
+                    **source,
+                    vol.Optional("max_hops", default=15): vol.All(
+                        vol.Coerce(int), vol.Range(min=1, max=30)
+                    ),
+                },
+                lambda c, d: c.traceroute(
+                    d["host"], d["max_hops"], d.get("source"), d["ipv6"]
+                ),
+            ),
+            "test_port": (
+                {
+                    **target,
+                    **host,
+                    **ipv6,
+                    vol.Required("port"): vol.All(
+                        vol.Coerce(int), vol.Range(min=1, max=65535)
+                    ),
+                },
+                lambda c, d: c.test_port(d["host"], d["port"], d["ipv6"]),
+            ),
+            "dns_lookup": (
+                {**target, **host},
+                lambda c, d: c.dns_lookup(d["host"]),
+            ),
+        }
+        for name, (schema, run) in actions.items():
+
+            async def handler(call: ServiceCall, run=run, name=name) -> ServiceResponse:
+                client = _client_for(self.hass, call.data.get("config_entry_id"))
+                try:
+                    return await run(client, call.data)
+                except PfSenseUnsupportedError as err:
+                    raise ServiceValidationError(str(err)) from err
+                except PfSenseError as err:
+                    raise HomeAssistantError(f"pfSense {name} failed: {err}") from err
+
+            self.hass.services.async_register(
+                DOMAIN,
+                name,
+                handler,
+                schema=vol.Schema(schema),
+                supports_response=SupportsResponse.ONLY,
+            )
+
+
+def _client_for(hass: HomeAssistant, entry_id: str | None):
+    """The client of ``entry_id``, or of the only loaded firewall."""
+    loaded = {
+        eid: data[PFSENSE_CLIENT]
+        for eid, data in (hass.data.get(DOMAIN) or {}).items()
+        if isinstance(data, dict) and PFSENSE_CLIENT in data
+    }
+    if entry_id:
+        if entry_id not in loaded:
+            raise ServiceValidationError(f"No loaded pfSense entry {entry_id}")
+        return loaded[entry_id]
+    if len(loaded) != 1:
+        raise ServiceValidationError(
+            "Pick the firewall with config_entry_id"
+            if loaded
+            else "No pfSense firewall is loaded"
+        )
+    return next(iter(loaded.values()))

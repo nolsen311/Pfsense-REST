@@ -215,3 +215,81 @@ exec_command:
       advanced: false
       example: "ping -c 1 yahoo.com"
       default: ""
+ping:
+  name: Ping
+  description: Ping a host from the firewall and return the loss and round-trip times.
+  fields:
+    config_entry_id: &firewall
+      name: Firewall
+      description: Which pfSense firewall to run it on. Only needed with more than one.
+      selector:
+        config_entry:
+          integration: pfsense
+    host: &host
+      name: Host
+      description: Host name or IP address.
+      required: true
+      example: "1.1.1.1"
+      selector:
+        text:
+    count:
+      name: Count
+      description: Packets to send (1-20).
+      default: 3
+      selector:
+        number:
+          min: 1
+          max: 20
+    source: &source
+      name: Source
+      description: Interface (e.g. wan, lan) or local address to send from. Default is any.
+      selector:
+        text:
+    ipv6: &ipv6
+      name: IPv6
+      description: Use IPv6 when the host is a name.
+      default: false
+      selector:
+        boolean:
+
+traceroute:
+  name: Traceroute
+  description: Trace the route to a host from the firewall (UDP) and return each hop.
+  fields:
+    config_entry_id: *firewall
+    host: *host
+    max_hops:
+      name: Max hops
+      description: Stop after this many hops (1-30). A hop that doesn't answer takes about 15 seconds.
+      default: 15
+      selector:
+        number:
+          min: 1
+          max: 30
+    source: *source
+    ipv6: *ipv6
+
+test_port:
+  name: Test port
+  description: Check whether the firewall can open a TCP connection to a host and port.
+  fields:
+    config_entry_id: *firewall
+    host: *host
+    port:
+      name: Port
+      description: TCP port (1-65535).
+      required: true
+      example: 443
+      selector:
+        number:
+          min: 1
+          max: 65535
+          mode: box
+    ipv6: *ipv6
+
+dns_lookup:
+  name: DNS lookup
+  description: Resolve a host name with the firewall's DNS servers and return the records and each server's response time.
+  fields:
+    config_entry_id: *firewall
+    host: *host
