@@ -678,6 +678,9 @@ which are mutually exclusive on the box:
   `v0.12.0` (Latest) adds the Tier 1 features from roadmap #21: package
   updates, pending notices, state table, certificate expiry, Dynamic DNS and
   NTP.
+  `v0.13.0` (Latest) adds the Tier 2 features: boot environments and "Back
+  up first", the opt-in safe firmware upgrade, the diagnostics actions, DNS
+  resolver RTT and schedule sensors, and pf tables (#29–#33).
 
 ## Target environment (confirmed)
 
