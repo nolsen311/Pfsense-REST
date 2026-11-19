@@ -215,7 +215,11 @@ class ServiceRegistrar:
 
     @callback
     def _register_diagnostics(self) -> None:
-        """Ping, traceroute, test_port, dns_lookup: actions that return results."""
+        """Actions that return results: the diagnostics and remove_table_entry.
+
+        The diagnostics only read, so their response is required.
+        remove_table_entry changes pf, so it can run without one.
+        """
         target = {vol.Optional("config_entry_id"): cv.string}
         host = {vol.Required("host"): cv.string}
         ipv6 = {vol.Optional("ipv6", default=False): cv.boolean}
@@ -262,6 +266,14 @@ class ServiceRegistrar:
                 {**target, **host},
                 lambda c, d: c.dns_lookup(d["host"]),
             ),
+            "remove_table_entry": (
+                {
+                    **target,
+                    vol.Required("table"): cv.string,
+                    vol.Required("entry"): cv.string,
+                },
+                lambda c, d: c.remove_pf_table_entry(d["table"], d["entry"]),
+            ),
         }
         for name, (schema, run) in actions.items():
 
@@ -279,8 +291,15 @@ class ServiceRegistrar:
                 name,
                 handler,
                 schema=vol.Schema(schema),
-                supports_response=SupportsResponse.ONLY,
+                supports_response=(
+                    SupportsResponse.OPTIONAL
+                    if name in _WRITE_ACTIONS
+                    else SupportsResponse.ONLY
+                ),
             )
+
+
+_WRITE_ACTIONS = frozenset({"remove_table_entry"})
 
 
 def _client_for(hass: HomeAssistant, entry_id: str | None):

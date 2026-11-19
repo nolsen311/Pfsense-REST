@@ -293,3 +293,28 @@ dns_lookup:
   fields:
     config_entry_id: *firewall
     host: *host
+
+remove_table_entry:
+  name: Remove pf table entry
+  description: >-
+    Remove an address or network from one of pf's tables, e.g. unblock a host
+    that sshguard or virusprot locked out. It changes the running table only:
+    an alias table is reloaded from the config the next time the filter
+    reloads. pfSense refuses it for bogons. Removing an address that isn't
+    there succeeds. Returns the table's remaining count and first entries.
+  fields:
+    config_entry_id: *firewall
+    table:
+      name: Table
+      description: pf table name, as in Diagnostics › Tables (e.g. sshguard).
+      required: true
+      example: "sshguard"
+      selector:
+        text:
+    entry:
+      name: Entry
+      description: The address or network to remove, exactly as the table lists it.
+      required: true
+      example: "203.0.113.7"
+      selector:
+        text:

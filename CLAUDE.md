@@ -427,6 +427,27 @@ Verified against the live 26.07 box:
   - Cached for 5 min; one binary sensor per schedule.
   - pfrest: unsupported.
   - Verified live (read-only) on 2026-11-17: 2 upstreams (DoT); 2 schedules.
+- **pf tables** (Netgate only):
+  - `GET /diag/tables` lists `{tables: [{table_name, avail_action,
+    action_descr}]}` with no counts, so each table is read from
+    `GET /diag/tables/{name}` (`{table_name, last_update, avail_action,
+    entries: [str]}`): 30 tables in 0.9 s with at most 4 in flight.
+  - `bogons` has ~3,000 entries, so `netgate_map.pf_table` keeps the count
+    plus the first 50 (`truncated`), and the sensor's `entries` attribute
+    is unrecorded.
+  - Sensors are enabled by default only for `PF_TABLES_ENABLED` (sshguard,
+    virusprot, snort2c, bogons). Alias tables start disabled.
+  - `remove_table_entry` (`SupportsResponse.OPTIONAL`, since it writes):
+    `DELETE /diag/tables/{table}/{entry}`, with the entry URL-encoded. It
+    changes runtime pf only, so a filter reload restores an alias table.
+    Verified on 2026-11-18 (approved):
+    - a missing entry in the empty `sshguard` table returns success and the
+      table;
+    - `bogons` returns 400 `"bogons table does not support invididual entry
+      deletion"`, which shows the encoded path reached the table.
+    - A successful deletion of a real entry is still unverified, because no
+      runtime table had one.
+  - pfrest: unsupported.
 - **Diagnostics actions** (Netgate only; `pypfsense/diag.py` parsers;
   `ServiceRegistrar._register_diagnostics`, `SupportsResponse.ONLY`):
   - They're **not** routed through entities like the other services. They

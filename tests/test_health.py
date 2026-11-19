@@ -81,6 +81,7 @@ def _client():
     client.get_firmware_update_info.return_value = None
     client.get_installed_packages.return_value = []
     client.get_dns_resolver_status.return_value = []
+    client.get_pf_tables.return_value = []
     client.get_schedules.return_value = {"timezone": None, "schedules": []}
     client.get_boot_environments.return_value = []
     client.get_dyndns.return_value = []

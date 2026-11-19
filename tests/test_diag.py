@@ -216,3 +216,47 @@ async def test_actions_pick_the_firewall(hass: HomeAssistant):
             blocking=True,
             return_response=True,
         )
+
+
+async def test_pf_tables_client():
+    """Each listed table is read; entries in the path are URL-encoded."""
+    client = _client()
+    details = {
+        "/diag/tables/sshguard": {"table_name": "sshguard", "entries": ["203.0.113.7"]},
+        "/diag/tables/bogons": {"table_name": "bogons", "entries": ["0.0.0.0/8"]},
+    }
+
+    async def get(path, **params):
+        if path == "/diag/tables":
+            return {
+                "tables": [{"table_name": "sshguard"}, {"table_name": "bogons"}, {}]
+            }
+        return details[path]
+
+    client._get = get
+    tables = await client.get_pf_tables()
+    assert [(t["name"], t["count"]) for t in tables] == [("sshguard", 1), ("bogons", 1)]
+
+    client._request = AsyncMock(return_value={"table_name": "bogons", "entries": []})
+    after = await client.remove_pf_table_entry("bogons", "0.0.0.0/8")
+    assert client._request.await_args.args == (
+        "DELETE",
+        "/diag/tables/bogons/0.0.0.0%2F8",
+    )
+    assert after["count"] == 0
+
+
+async def test_remove_table_entry_action(hass: HomeAssistant):
+    """A write: it runs with or without asking for the response."""
+    client = MagicMock()
+    client.remove_pf_table_entry = AsyncMock(
+        return_value={"name": "sshguard", "count": 0}
+    )
+    await _register(hass, {"only": client})
+    data = {"table": "sshguard", "entry": "203.0.113.7"}
+    await hass.services.async_call(DOMAIN, "remove_table_entry", data, blocking=True)
+    result = await hass.services.async_call(
+        DOMAIN, "remove_table_entry", data, blocking=True, return_response=True
+    )
+    assert result == {"name": "sshguard", "count": 0}
+    client.remove_pf_table_entry.assert_awaited_with("sshguard", "203.0.113.7")

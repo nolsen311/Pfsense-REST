@@ -16,6 +16,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_URL, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 
 
 @pytest.fixture(autouse=True)
@@ -60,6 +61,7 @@ def _full_client_mock():
     client.get_firmware_update_info.return_value = None
     client.get_installed_packages.return_value = []
     client.get_dns_resolver_status.return_value = []
+    client.get_pf_tables.return_value = []
     client.get_schedules.return_value = {"timezone": None, "schedules": []}
     client.get_boot_environments.return_value = []
     client.get_dyndns.return_value = []
@@ -787,4 +789,37 @@ async def test_schedule_and_resolver_entities(hass: HomeAssistant, freezer):
     rtt = hass.states.get("sensor.router_local_dns_resolver_1_1_1_1_rtt")
     assert rtt.state == "127.0"
     assert rtt.attributes["port"] == 853 and rtt.attributes["ping_ms"] == 35.0
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.asyncio
+async def test_pf_table_sensors(hass: HomeAssistant):
+    """Runtime tables are enabled; alias tables start disabled."""
+    client = _full_client_mock()
+    client.get_pf_tables.return_value = [
+        {
+            "name": "sshguard",
+            "count": 1,
+            "entries": ["203.0.113.7"],
+            "truncated": False,
+            "last_update": None,
+            "action": "empty",
+        },
+        {
+            "name": "trustedMgmt",
+            "count": 3,
+            "entries": ["10.0.0.1"],
+            "truncated": False,
+            "last_update": None,
+            "action": "empty",
+        },
+    ]
+    entry = _netgate_entry()
+    await _setup(hass, entry, client)
+    guard = hass.states.get("sensor.router_local_pf_table_sshguard")
+    assert guard.state == "1"
+    assert guard.attributes["entries"] == ["203.0.113.7"]
+    assert hass.states.get("sensor.router_local_pf_table_trustedmgmt") is None
+    reg = er.async_get(hass).async_get("sensor.router_local_pf_table_trustedmgmt")
+    assert reg is not None and reg.disabled_by is er.RegistryEntryDisabler.INTEGRATION
     assert await hass.config_entries.async_unload(entry.entry_id)
