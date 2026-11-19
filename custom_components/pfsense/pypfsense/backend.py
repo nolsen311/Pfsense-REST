@@ -66,6 +66,12 @@ class PfSenseBackend(Protocol):
     async def download_config_backup(self, password: str) -> bytes:
         """Return the whole config, encrypted with ``password``."""
 
+    async def get_pf_tables(self) -> list[dict]:
+        """Return every pf table: name, count, first entries."""
+
+    async def remove_pf_table_entry(self, table: str, entry: str) -> dict:
+        """Delete ``entry`` from pf table ``table``; return the table after."""
+
     async def get_dns_resolver_status(self) -> list[dict]:
         """Return Unbound's per-upstream RTT, timeouts and lameness."""
 

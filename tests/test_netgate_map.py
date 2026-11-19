@@ -929,3 +929,27 @@ def test_schedules_and_activity():
     assert active("Holidays", "2027-01-01T00:00") is True
     assert active("Holidays", "2026-12-24T15:00") is False
     assert active("Broken", "2026-11-16T12:00") is False
+
+
+def test_pf_table():
+    """Count everything, keep the first 50 entries."""
+    big = nm.pf_table(
+        {
+            "table_name": "bogons",
+            "avail_action": "update",
+            "last_update": "2026-11-02T07:26:38Z",
+            "entries": [f"10.{i}.0.0/16" for i in range(60)] + ["", None],
+        }
+    )
+    assert (big["count"], len(big["entries"]), big["truncated"]) == (60, 50, True)
+    assert big["last_update"] == "2026-11-02T07:26:38Z" and big["action"] == "update"
+    empty = nm.pf_table({"table_name": "sshguard", "last_update": "", "entries": []})
+    assert empty == {
+        "name": "sshguard",
+        "count": 0,
+        "entries": [],
+        "truncated": False,
+        "last_update": None,
+        "action": None,
+    }
+    assert nm.pf_table({}) is None

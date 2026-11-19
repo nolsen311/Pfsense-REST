@@ -306,6 +306,14 @@ class PfRestClient:
         """Not implemented for the REST API package backend."""
         raise PfSenseUnsupportedError("the safe upgrade needs the Netgate API backend")
 
+    async def get_pf_tables(self) -> list[dict]:
+        """Not implemented for the REST API package backend."""
+        raise PfSenseUnsupportedError("pf tables need the Netgate API backend")
+
+    async def remove_pf_table_entry(self, table: str, entry: str) -> dict:
+        """Not implemented for the REST API package backend."""
+        raise PfSenseUnsupportedError("pf tables need the Netgate API backend")
+
     async def get_dns_resolver_status(self) -> list[dict]:
         """Not implemented for the REST API package backend."""
         raise PfSenseUnsupportedError(

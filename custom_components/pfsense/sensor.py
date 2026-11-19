@@ -353,6 +353,24 @@ async def async_setup_entry(  # noqa: C901 - flat per-telemetry-type entity buil
             for row in dict_get(state, "dns_resolver", None) or []
         )
 
+        entities.extend(
+            PfSensePfTableSensor(
+                config_entry,
+                coordinator,
+                SensorEntityDescription(
+                    key=f"pf_table.{table['name']}",
+                    name=f"pf Table {table['name']}",
+                    icon="mdi:table-network",
+                    native_unit_of_measurement="entries",
+                    state_class=SensorStateClass.MEASUREMENT,
+                    entity_category=EntityCategory.DIAGNOSTIC,
+                ),
+                table["name"] in PF_TABLES_ENABLED,
+                table["name"],
+            )
+            for table in dict_get(state, "pf_tables", None) or []
+        )
+
         entities.extend(build_health_sensors(config_entry, coordinator))
         return entities
 
@@ -918,4 +936,47 @@ class PfSenseDnsResolverSensor(PfSenseSensor):
                 "lame",
                 "expired",
             )
+        }
+
+
+# Tables pf fills at runtime. Alias tables mirror the config, so their
+# sensors start disabled.
+PF_TABLES_ENABLED = frozenset({"sshguard", "virusprot", "snort2c", "bogons"})
+
+
+class PfSensePfTableSensor(PfSenseSensor):
+    """The number of entries in one pf table."""
+
+    _unrecorded_attributes = frozenset({"entries"})
+
+    def __init__(self, config_entry, coordinator, entity_description, enabled, table):
+        """Initialize for pf table ``table``."""
+        super().__init__(config_entry, coordinator, entity_description, enabled)
+        self._table = table
+
+    def _row(self) -> dict | None:
+        for row in (self.coordinator.data or {}).get("pf_tables") or []:
+            if row.get("name") == self._table:
+                return row
+        return None
+
+    @property
+    def available(self) -> bool:
+        """Unavailable once the table is gone."""
+        return self._row() is not None and super().available
+
+    @property
+    def native_value(self):
+        """Entry count."""
+        return (self._row() or {}).get("count")
+
+    @property
+    def extra_state_attributes(self):
+        """The first entries, and when pfSense last refreshed the table."""
+        row = self._row() or {}
+        return {
+            "table": self._table,
+            "entries": row.get("entries"),
+            "truncated": row.get("truncated"),
+            "last_update": row.get("last_update"),
         }

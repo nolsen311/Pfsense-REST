@@ -670,6 +670,46 @@ class NetgateClient:
         self._schedules = (now, result)
         return result
 
+    async def get_pf_tables(self) -> list[dict]:
+        """Every pf table with its entry count (``/diag/tables`` + details).
+
+        The listing has names only, so each table is read too (a few ms
+        each on the test box, 30 tables). At most 4 at a time.
+        """
+        listing = await self._get("/diag/tables")
+        names = [
+            t["table_name"]
+            for t in (listing or {}).get("tables") or []
+            if isinstance(t, dict) and t.get("table_name")
+        ]
+        limit = asyncio.Semaphore(4)
+
+        async def one(name: str) -> dict | None:
+            async with limit:
+                return netgate_map.pf_table(
+                    await self._get(f"/diag/tables/{quote(name, safe='')}")
+                )
+
+        return [t for t in await asyncio.gather(*map(one, names)) if t]
+
+    async def remove_pf_table_entry(self, table: str, entry: str) -> dict:
+        """``DELETE /diag/tables/{table}/{entry}``; returns the table after.
+
+        This changes pf's runtime table only. An alias table is reloaded
+        from the config on the next filter reload, so this suits dynamic
+        tables (sshguard, virusprot, snort2c), not editing aliases.
+
+        Verified 2026-11-18: an entry that isn't there succeeds, and bogons
+        answers 400 "bogons table does not support invididual entry
+        deletion" (sic).
+        """
+        async with self._write_lock:
+            body = await self._request(
+                "DELETE",
+                f"/diag/tables/{quote(table, safe='')}/{quote(entry, safe='')}",
+            )
+        return netgate_map.pf_table(body) or {"name": table}
+
     # ------------------------------------------------------- diagnostics
     # These send test traffic from the firewall; none changes its config.
 

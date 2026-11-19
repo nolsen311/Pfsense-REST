@@ -157,6 +157,11 @@ want in the entity settings.
   (Unbound's) smoothed round-trip time in ms, with ping, variance, timeouts
   and lameness counts in the attributes. The server is shown as
   `<address>@<port>` (853 means DNS over TLS).
+- **Per pf table** (Netgate API, diagnostic): the number of entries, with
+  the first 50 in the attributes. Only the tables pf fills at runtime
+  (`sshguard`, `virusprot`, `snort2c`, `bogons`) are enabled by default. The
+  alias tables mirror your config, so enable those you want in the entity
+  settings.
 
 ### Switches
 
@@ -294,7 +299,8 @@ equivalent. The user therefore needs shell access.
 ### Diagnostics actions (Netgate API)
 
 These run a test from the firewall and **return the result** to your script
-or automation (`response_variable`). They change nothing on the firewall.
+or automation (`response_variable`). Apart from `remove_table_entry`, they
+change nothing on the firewall.
 They take a `config_entry_id` only if you have more than one firewall.
 
 | Action | Returns |
@@ -303,6 +309,7 @@ They take a `config_entry_id` only if you have more than one firewall.
 | `pfsense.traceroute` | `hops`: each with its `replies` (address and times), plus `reached` and `output`. Uses UDP. `max_hops` 1–30; a silent hop takes about 15 s. |
 | `pfsense.test_port` | `open` true/false and the message, for a TCP connection to `host`:`port`. |
 | `pfsense.dns_lookup` | `records` (type and data), and `servers`, each resolver's response time in ms. |
+| `pfsense.remove_table_entry` | Removes an address or network from a pf table, e.g. to unblock a host that sshguard locked out, and returns the table's count after. **This one changes the firewall**: the running table only, so an alias table comes back on the next filter reload. pfSense refuses it for `bogons`. |
 
 ```yaml
 - action: pfsense.ping

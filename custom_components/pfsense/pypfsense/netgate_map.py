@@ -788,3 +788,29 @@ def schedule_active(schedule: dict, now: datetime) -> bool:
         if rng["start"] <= minute <= rng["end"]:
             return True
     return False
+
+
+# ------------------------------------------------------------------ pf tables
+
+PF_TABLE_ENTRIES_KEPT = 50
+
+
+def pf_table(body: Any) -> dict | None:
+    """``/diag/tables/{name}`` → count plus the first entries.
+
+    Only ``PF_TABLE_ENTRIES_KEPT`` entries are kept: bogons alone has
+    ~3,000, and the state is written to disk and diagnostics.
+    """
+    data = body if isinstance(body, dict) else {}
+    name = data.get("table_name")
+    if not name:
+        return None
+    entries = [str(e) for e in data.get("entries") or [] if e not in (None, "")]
+    return {
+        "name": name,
+        "count": len(entries),
+        "entries": entries[:PF_TABLE_ENTRIES_KEPT],
+        "truncated": len(entries) > PF_TABLE_ENTRIES_KEPT,
+        "last_update": data.get("last_update") or None,
+        "action": data.get("avail_action") or None,
+    }
