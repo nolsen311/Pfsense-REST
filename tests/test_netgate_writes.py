@@ -323,7 +323,8 @@ async def test_shell_backed_actions(client) -> None:
                     {
                         "identity": "lan",
                         "assigned_name": "LAN",
-                        "ip_address": "10.0.13.1",
+                        # 198.18.0.0/15 is reserved for network testing (RFC 2544)
+                        "ip_address": "198.18.0.1",
                         "subnet_mask": "255.254.0.0",
                     }
                 ]
@@ -351,7 +352,7 @@ async def test_shell_backed_actions(client) -> None:
         "/usr/local/sbin/pfSsh.php playback 'svc' 'restart' 'unbound'",
         "/usr/local/sbin/pfSsh.php playback 'svc' 'start' 'openvpn' 'server' '2'",
         "/usr/local/sbin/pfSsh.php playback 'svc' 'restart' 'unbound'",
-        "/usr/local/bin/wol -i '10.1.255.255' 'aa:bb:cc:00:00:01'",  # /15
+        "/usr/local/bin/wol -i '198.19.255.255' 'aa:bb:cc:00:00:01'",  # /15
     ]
 
 
