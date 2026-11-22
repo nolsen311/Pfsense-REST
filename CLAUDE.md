@@ -84,7 +84,7 @@ The earlier LIVE-CHECK is resolved. The **prefix** filter is reliable:
 
 - `DELETE /api/v2/firewall/states?source__startswith=<prefix>` and
   `?destination__startswith=<prefix>` both delete the matching states.
-  State endpoints render as `ip:port` (IPv4), so a host is `"10.1.1.1:"` and an
+  State endpoints render as `ip:port` (IPv4), so a host is `"192.0.2.10:"` and an
   octet-aligned network is its leading octets plus a dot (`"10.0.10."`).
 - `limit=0` means "no limit" for both GET and DELETE — a single call deletes
   **every** matching state, no per-call cap. (`limit=100000` behaves
@@ -1090,7 +1090,7 @@ today. Original intent, still valid:
 
 ## Reference
 
-- Live box: `https://pfsense.sneakyblueshoes.int:8444/api/v2` — schema at
+- Live box: `https://<firewall>:8444/api/v2` — schema at
   `/api/v2/schema/openapi`, Swagger UI at `/api/v2/documentation`.
 - Package: https://github.com/pfrest/pfSense-pkg-RESTAPI (v2.10.2 on the box,
   v2.11.0 latest) — docs https://pfrest.org — EOL notice: discussion #962
